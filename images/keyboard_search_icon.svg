@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="32" height="32" viewBox="0 0 32 32">
+  <defs>
+    <clipPath id="clip-path">
+      <rect id="사각형_203" data-name="사각형 203" width="32" height="32" transform="translate(1139 763)" fill="#fff" stroke="#707070" stroke-width="1" opacity="0.5"/>
+    </clipPath>
+  </defs>
+  <g id="keyboard_search_icon" transform="translate(-1139 -763)" clip-path="url(#clip-path)">
+    <path id="keyboard_search_icon-2" data-name="keyboard_search_icon" d="M16.663,20.385a11.015,11.015,0,1,1,1.856-1.414l5.606,7.6L22.2,28Zm-14.315-9.4a8.638,8.638,0,1,0,8.638-8.638A8.647,8.647,0,0,0,2.347,10.985Z" transform="matrix(0.978, -0.208, 0.208, 0.978, 1139.289, 768.314)" fill="#fff" stroke="#fff" stroke-width="1"/>
+  </g>
+</svg>

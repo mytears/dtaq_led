@@ -1,0 +1,20 @@
+{
+  "welcome": {
+    "show": false,
+    "background": "commonfiles/bg_welcome-1_led.png",
+    "subtitle": "WELCOME",
+    "title": "방위사업청 대표단",
+    "message": "방문을 진심으로 환영합니다",
+    "scheduleTitle": "일정",
+    "schedule": "본관 3층 대회의실 · 기술협력 간담"
+  },
+  "rolling": {
+    "imageSeconds": 10,
+    "fit": "fill",
+    "autoDiscover": true,
+    "items": [
+      { "src": "commonfiles/MAIN000070.mp4", "type": "video" },
+      { "src": "commonfiles/San-Francisco-Skyline-Mural-Wallpaper.jpg", "type": "image", "seconds": 10 }
+    ]
+  }
+}

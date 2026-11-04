@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "note": "화면 연동용 예시 데이터. K9 이미지는 제공된 시안에서 추출한 샘플이며 나머지 상세는 교체 필요.",
+  "weapons": [
+    {
+      "id": "weapon-01",
+      "name": "K2 흑표 전차",
+      "branch": "army",
+      "image": "",
+      "development": "자료 준비중",
+      "manufacturer": "자료 준비중",
+      "period": "자료 준비중",
+      "performance": [
+        "상세 자료를 등록해주세요."
+      ],
+      "description": "무기체계 소개 자료를 등록해주세요."
+    },
+    {
+      "id": "weapon-02",
+      "name": "K9A1 자주포",
+      "branch": "army",
+      "image": "images/weapon-k9-sample.png",
+      "development": "국내개발",
+      "manufacturer": "한화에어로스페이스",
+      "period": "1996년~2001년 / 1999년~",
+      "performance": [
+        "구경 155mm",
+        "최대사거리 40km(사거리연장탄 기준)",
+        "최대발사속도 분당 6발",
+        "신속한 사격전환 및 기동능력",
+        "자동화 사격통제체계 탑재"
+      ],
+      "description": "세계 최고수준의 사거리와 화력을 보유한 대한민국 육군의 대표적인 자주포로, 우수한 기동성과 생존성을 갖춤"
+    },
+    {
+      "id": "weapon-03",
+      "name": "K21 보병전투장갑차",
+      "branch": "army",
+      "image": "",
+      "development": "자료 준비중",
+      "manufacturer": "자료 준비중",
+      "period": "자료 준비중",
+      "performance": [
+        "상세 자료를 등록해주세요."
+      ],
+      "description": "무기체계 소개 자료를 등록해주세요."
+    },
+    {
+      "id": "weapon-04",
+      "name": "천무 다연장로켓",
+      "branch": "army",
+      "image": "",
+      "development": "자료 준비중",
+      "manufacturer": "자료 준비중",
+      "period": "자료 준비중",
+      "performance": [
+        "상세 자료를 등록해주세요."
+      ],
+      "description": "무기체계 소개 자료를 등록해주세요."
+    },
+    {
+      "id": "weapon-05",
+      "name": "천궁-Ⅱ",
+      "branch": "army",
+      "image": "",
+      "development": "자료 준비중",
+      "manufacturer": "자료 준비중",
+      "period": "자료 준비중",
+      "performance": [
+        "상세 자료를 등록해주세요."
+      ],
+      "description": "무기체계 소개 자료를 등록해주세요."
+    },
+    {
+      "id": "weapon-06",
+      "name": "장보고-Ⅲ 잠수함",
+      "branch": "navy",
+      "image": "",
+      "development": "자료 준비중",
+      "manufacturer": "자료 준비중",
+      "period": "자료 준비중",
+      "performance": [
+        "상세 자료를 등록해주세요."
+      ],
+      "description": "무기체계 소개 자료를 등록해주세요."
+    },
+    {
+      "id": "weapon-07",
+      "name": "KF-21 보라매",
+      "branch": "air",
+      "image": "",
+      "development": "자료 준비중",
+      "manufacturer": "자료 준비중",
+      "period": "자료 준비중",
+      "performance": [
+        "상세 자료를 등록해주세요."
+      ],
+      "description": "무기체계 소개 자료를 등록해주세요."
+    },
+    {
+      "id": "weapon-08",
+      "name": "FA-50",
+      "branch": "air",
+      "image": "",
+      "development": "자료 준비중",
+      "manufacturer": "자료 준비중",
+      "period": "자료 준비중",
+      "performance": [
+        "상세 자료를 등록해주세요."
+      ],
+      "description": "무기체계 소개 자료를 등록해주세요."
+    },
+    {
+      "id": "weapon-09",
+      "name": "K808 차륜형장갑차",
+      "branch": "army",
+      "image": "",
+      "development": "자료 준비중",
+      "manufacturer": "자료 준비중",
+      "period": "자료 준비중",
+      "performance": [
+        "상세 자료를 등록해주세요."
+      ],
+      "description": "무기체계 소개 자료를 등록해주세요."
+    },
+    {
+      "id": "weapon-10",
+      "name": "비호복합",
+      "branch": "army",
+      "image": "",
+      "development": "자료 준비중",
+      "manufacturer": "자료 준비중",
+      "period": "자료 준비중",
+      "performance": [
+        "상세 자료를 등록해주세요."
+      ],
+      "description": "무기체계 소개 자료를 등록해주세요."
+    },
+    {
+      "id": "weapon-11",
+      "name": "수리온",
+      "branch": "army",
+      "image": "",
+      "development": "자료 준비중",
+      "manufacturer": "자료 준비중",
+      "period": "자료 준비중",
+      "performance": [
+        "상세 자료를 등록해주세요."
+      ],
+      "description": "무기체계 소개 자료를 등록해주세요."
+    },
+    {
+      "id": "weapon-12",
+      "name": "세종대왕급 구축함",
+      "branch": "navy",
+      "image": "",
+      "development": "자료 준비중",
+      "manufacturer": "자료 준비중",
+      "period": "자료 준비중",
+      "performance": [
+        "상세 자료를 등록해주세요."
+      ],
+      "description": "무기체계 소개 자료를 등록해주세요."
+    }
+  ]
+}

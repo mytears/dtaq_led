@@ -1,0 +1,17 @@
+{
+  "name": "dtaq-led",
+  "version": "1.0.0",
+  "private": true,
+  "description": "국방기술품질원 LED 안내 화면 및 정적 미리보기",
+  "scripts": {
+    "start": "node server.cjs",
+    "test": "node --test",
+    "media": "node scripts/media-manifest.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "linkedom": "0.18.12"
+  }
+}
