@@ -61,13 +61,11 @@ node scripts/install-dtaq-bridge.cjs 'D:\kiosk\dtaq'
 
 직원·무기·사업 정보는 명령을 받을 때마다 JSON을 다시 읽고 웰컴 전환 때도 최신 웰컴 설정을 읽습니다. 두 프로젝트의 JSON은 독립 파일이므로 실제 운영에서는 같은 데이터로 배포해주세요.
 
-홍보 미디어는 `rolling.items` 순서로 재생합니다. 동영상은 끝까지 무음 재생하고 이미지는 `seconds` 또는 `imageSeconds` 동안 표시합니다. 기본 `fit: "fill"`은 원본 비율과 관계없이 LED 화면을 꽉 채웁니다. 다른 화면으로 바꾸면 영상과 타이머를 중지합니다.
+홍보 미디어는 `notice.notice_list` 순서로 재생합니다. 각 항목에는 `id`, `type`(`MOV` 또는 `IMG`), `file_path`, `ptime`(초), `ratio`(`full` 또는 `contain`)를 지정합니다. 영상은 무음으로 재생하고 `ptime`보다 짧으면 남은 시간 동안 반복합니다. 이미지는 로딩이 완료된 뒤 `ptime` 동안 표시합니다. `full`은 창 전체를 채우고, `contain`은 원본 비율을 유지하면서 창 안에 최대 크기로 표시합니다. 다른 화면으로 바꾸면 영상과 타이머를 중지합니다.
 
-`autoDiscover: true`는 개발용 미리보기의 파일 목록 또는 `data/media_manifest.json`을 사용해 새 홍보 파일을 뒤에 추가합니다. 웰컴 전용 `bg_welcome*` 파일은 제외합니다. C# 프로그램에서 파일을 추가/삭제한 뒤에는 목록도 갱신해주세요. 개발 환경에서는 다음 명령으로 생성합니다.
+WebView2의 `webViewZoom=0.5`에서 재생 초반의 네이티브 영상 표면이 작게 표시되는 현상을 피하기 위해, 동영상의 디코딩된 프레임을 화면 전체 크기의 캔버스에 출력합니다. 캔버스 해상도는 현재 창 크기와 디바이스 배율에 맞추며 화면 전환 시 프레임 콜백도 취소합니다.
 
-```powershell
-node scripts/media-manifest.cjs
-```
+홍보 미디어를 추가하거나 삭제할 때는 `data/kiosk_contents.json`의 `notice.notice_list`를 수정한 뒤 LED 페이지를 새로고침합니다.
 
 직원 120명의 근무이력은 스크롤 확인용으로 12줄씩 구성했습니다. 추가 이력은 JSON의 `isTestData: true`로 구분하며 화면에는 테스트 문구를 표시하지 않습니다. 기존 이력은 `tests/fixtures/employee-histories.original.json`에 보관했습니다.
 

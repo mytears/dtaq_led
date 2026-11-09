@@ -3,11 +3,10 @@
   const $ = id => document.getElementById(id);
   const protocol = window.LedProtocol;
   const labels = { rolling: '홍보 미디어 롤링', welcome: '웰컴', 'employee-search': '직원 검색 대기', employee: '직원 정보', 'weapon-search': '주요 사업 검색 대기', weapon: '무기 / 사업 정보' };
-  let config = {}, screen = '', revision = 0, mediaRevision = 0, mediaTimer, currentMedia, careerFrame, noticeTimer;
+  let config = {}, screen = '', revision = 0, mediaRevision = 0, mediaTimer, currentMedia, mediaFrame, careerFrame, noticeTimer;
   let playlist = [], mediaIndex = -1, failedMedia = new Set();
   const status = text => { $('debug-status').textContent = text; };
   const text = (id, value) => { $(id).textContent = value == null || value === '' ? '—' : String(value); };
-  const seconds = (value, fallback) => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback;
   function localAsset(value, directories = ['images', 'commonfiles']) {
     if (typeof value !== 'string' || value.includes('\\') || /[?#\x00-\x1f]/.test(value)) return '';
     const parts = value.split('/');
@@ -31,7 +30,10 @@
     mediaRevision++;
     clearTimeout(mediaTimer);
     if (currentMedia) {
-      currentMedia.onload = currentMedia.onerror = currentMedia.onended = currentMedia.ontimeupdate = null;
+      if (typeof currentMedia.cancelVideoFrameCallback === 'function') currentMedia.cancelVideoFrameCallback(mediaFrame);
+      else cancelAnimationFrame(mediaFrame);
+      mediaFrame = null;
+      currentMedia.onload = currentMedia.onloadeddata = currentMedia.onerror = currentMedia.onplaying = null;
       if (currentMedia.tagName === 'VIDEO') { currentMedia.pause(); currentMedia.removeAttribute('src'); currentMedia.load(); }
       currentMedia = null;
     }
@@ -51,27 +53,10 @@
     document.documentElement.style.setProperty('--stage-scale', Math.min(innerWidth / 3200, innerHeight / 1200));
   }
   function normalizePlaylist(items) {
-    return (Array.isArray(items) ? items : []).map(item => typeof item === 'string' ? { src: item } : item)
-      .filter(item => item && localAsset(item.src, ['commonfiles']))
-      .map(item => ({ ...item, type: item.type || (/\.(mp4|webm|ogv)$/i.test(item.src) ? 'video' : 'image') }));
-  }
-  async function loadPlaylist() {
-    const rolling = config.rolling || {};
-    let items = normalizePlaylist(rolling.items);
-    if (rolling.autoDiscover !== false) {
-      let discovered;
-      // A plain static server can use a generated manifest; the bundled server scans live.
-      try { discovered = await json('api/media'); }
-      catch { try { discovered = await json('data/media_manifest.json'); } catch { /* explicit JSON playlist remains usable */ } }
-      if (Array.isArray(discovered)) {
-        const found = normalizePlaylist(discovered);
-        const paths = new Set(found.map(item => item.src));
-        items = items.filter(item => paths.has(item.src));
-        const configured = new Set(items.map(item => item.src));
-        items.push(...found.filter(item => !configured.has(item.src)));
-      }
-    }
-    return items;
+    return (Array.isArray(items) ? items : []).filter(item => item &&
+      localAsset(item.file_path, ['commonfiles']) &&
+      ['MOV', 'IMG'].includes(item.type) && ['full', 'contain'].includes(item.ratio) &&
+      Number.isFinite(item.ptime) && item.ptime > 0);
   }
   function nextMedia() {
     if (screen !== 'rolling') return;
@@ -84,37 +69,64 @@
     $('media-empty').hidden = true;
     do { mediaIndex = (mediaIndex + 1) % playlist.length; } while (failedMedia.has(mediaIndex));
     const item = playlist[mediaIndex], index = mediaIndex, token = mediaRevision;
-    const element = document.createElement(item.type === 'video' ? 'video' : 'img');
+    const isVideo = item.type === 'MOV';
+    const contain = item.ratio === 'contain';
+    const element = document.createElement(isVideo ? 'video' : 'img');
     currentMedia = element;
     const active = () => screen === 'rolling' && token === mediaRevision && currentMedia === element;
     const fail = () => {
       if (!active()) return;
       failedMedia.add(index);
-      status(`미디어를 건너뜁니다: ${item.src}`);
+      status(`미디어를 건너뜁니다: ${item.file_path}`);
       nextMedia();
+    };
+    const startDisplayTimer = () => {
+      if (!active()) return;
+      element.onplaying = element.onload = null;
+      clearTimeout(mediaTimer);
+      mediaTimer = setTimeout(() => { if (active()) nextMedia(); }, item.ptime * 1000);
     };
     element.onerror = fail;
     $('media-player').append(element);
-    document.documentElement.style.setProperty('--media-fit', ['contain', 'cover', 'fill'].includes(config.rolling?.fit) ? config.rolling.fit : 'fill');
-    status(`롤링 ${index + 1}/${playlist.length} · ${item.src.split('/').pop()}`);
-    if (item.type === 'video') {
+    status(`롤링 ${index + 1}/${playlist.length} · ${item.file_path.split('/').pop()}`);
+    if (isVideo) {
+      // WebView2 can initially paint its native video surface at the wrong zoom.
+      // Present decoded frames on a viewport-sized canvas instead of that surface.
+      const canvas = document.createElement('canvas');
+      canvas.setAttribute('aria-hidden', 'true');
+      element.setAttribute('aria-hidden', 'true');
+      const context = canvas.getContext('2d', { alpha: false });
+      const drawFrame = () => {
+        if (!active()) return;
+        if (element.readyState >= 2 && element.videoWidth && element.videoHeight) {
+          const bounds = canvas.getBoundingClientRect(), ratio = window.devicePixelRatio || 1;
+          const width = Math.max(1, Math.round(bounds.width * ratio)), height = Math.max(1, Math.round(bounds.height * ratio));
+          if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+          if (contain) {
+            const scale = Math.min(width / element.videoWidth, height / element.videoHeight);
+            const frameWidth = element.videoWidth * scale, frameHeight = element.videoHeight * scale;
+            context.clearRect(0, 0, width, height);
+            context.drawImage(element, (width - frameWidth) / 2, (height - frameHeight) / 2, frameWidth, frameHeight);
+          } else {
+            context.drawImage(element, 0, 0, width, height);
+          }
+        }
+        mediaFrame = typeof element.requestVideoFrameCallback === 'function'
+          ? element.requestVideoFrameCallback(drawFrame) : requestAnimationFrame(drawFrame);
+      };
+      $('media-player').append(canvas);
+      element.onloadeddata = drawFrame;
+      element.onplaying = startDisplayTimer;
       element.muted = true; element.autoplay = true; element.playsInline = true; element.preload = 'auto';
-      const watchdog = () => { if (active()) { clearTimeout(mediaTimer); mediaTimer = setTimeout(fail, 30000); } };
-      element.ontimeupdate = watchdog;
-      element.onended = () => { if (active()) nextMedia(); };
-      element.src = item.src;
-      watchdog();
-      element.play().catch(fail);
+      element.loop = true;
     } else {
       element.alt = item.alt || '국방기술품질원 홍보 이미지';
-      element.onload = () => {
-        if (!active()) return;
-        clearTimeout(mediaTimer);
-        mediaTimer = setTimeout(nextMedia, seconds(item.seconds, seconds(config.rolling?.imageSeconds, 10)) * 1000);
-      };
-      mediaTimer = setTimeout(fail, 15000);
-      element.src = item.src;
+      element.style.objectFit = contain ? 'contain' : 'fill';
+      element.onload = startDisplayTimer;
     }
+    mediaTimer = setTimeout(fail, isVideo ? 30000 : 15000);
+    element.src = item.file_path;
+    if (isVideo) element.play().catch(fail);
   }
   function renderWelcome() {
     const welcome = config.welcome || {};
@@ -196,10 +208,10 @@
       const { type, id } = command;
       text('debug-connection', message);
       if (type === 'rolling') {
-        show('rolling'); status('홍보 미디어를 불러오고 있습니다.');
-        const items = await loadPlaylist();
-        if (token !== revision) return false;
-        playlist = items; failedMedia = new Set(); mediaIndex = -1; show('rolling'); nextMedia();
+        failedMedia = new Set();
+        mediaIndex = -1;
+        show('rolling');
+        nextMedia();
       } else if (type === 'welcome') {
         renderWelcome(); show('welcome'); status('웰컴 화면 · 롤링 중지');
         const updated = await json('data/kiosk_contents.json');
@@ -239,7 +251,7 @@
     try { config = await json('data/kiosk_contents.json'); }
     catch (error) { report(Error('data/kiosk_contents.json을 읽을 수 없습니다. HTTP 서버로 실행하고 JSON 문법을 확인해주세요.')); }
     renderWelcome();
-    playlist = await loadPlaylist();
+    playlist = normalizePlaylist(config.notice?.notice_list);
     if (!revision) { show(config.welcome?.show === true ? 'welcome' : 'rolling'); if (screen === 'rolling') nextMedia(); }
     const lists = await Promise.allSettled([json('data/employees.json'), json('data/weapons.json'), json('data/projects.json')]);
     lists.forEach((result, index) => {
