@@ -3,8 +3,11 @@
   const $ = id => document.getElementById(id);
   const protocol = window.LedProtocol;
   const labels = { rolling: '홍보 미디어 롤링', welcome: '웰컴', 'employee-search': '직원 검색 대기', employee: '직원 정보', 'weapon-search': '주요 사업 검색 대기', weapon: '무기 / 사업 정보' };
-  let config = {}, screen = '', revision = 0, mediaRevision = 0, mediaTimer, currentMedia, mediaFrame, careerFrame, noticeTimer;
-  let playlist = [], mediaIndex = -1, failedMedia = new Set();
+  let config = {};
+  let screen = '', revision = 0, currentGroup, careerFrame, noticeTimer, scheduleTimer;
+  let playlist = [], mediaIndex = -1, failedGroups = new Set();
+  let welcomeList = [], activeWelcome;
+  const failedWelcome = new Set();
   const status = text => { $('debug-status').textContent = text; };
   const text = (id, value) => { $(id).textContent = value == null || value === '' ? '—' : String(value); };
   function localAsset(value, directories = ['images', 'commonfiles']) {
@@ -27,17 +30,14 @@
     console.error('[DTaQ LED]', error);
   }
   function stopMedia() {
-    mediaRevision++;
-    clearTimeout(mediaTimer);
-    if (currentMedia) {
-      if (typeof currentMedia.cancelVideoFrameCallback === 'function') currentMedia.cancelVideoFrameCallback(mediaFrame);
-      else cancelAnimationFrame(mediaFrame);
-      mediaFrame = null;
-      currentMedia.onload = currentMedia.onloadeddata = currentMedia.onerror = currentMedia.onplaying = null;
-      if (currentMedia.tagName === 'VIDEO') { currentMedia.pause(); currentMedia.removeAttribute('src'); currentMedia.load(); }
-      currentMedia = null;
-    }
-    $('media-player').replaceChildren();
+    if (!currentGroup) return;
+    const group = currentGroup;
+    currentGroup = null;
+    clearTimeout(group.timer);
+    group.panes.forEach(pane => {
+      pane.stop();
+      pane.pane.remove();
+    });
   }
   function show(next) {
     stopMedia();
@@ -52,92 +52,244 @@
   function resize() {
     document.documentElement.style.setProperty('--stage-scale', Math.min(innerWidth / 3200, innerHeight / 1200));
   }
-  function normalizePlaylist(items) {
-    return (Array.isArray(items) ? items : []).filter(item => item &&
-      localAsset(item.file_path, ['commonfiles']) &&
-      ['MOV', 'IMG'].includes(item.type) && ['full', 'contain'].includes(item.ratio) &&
-      Number.isFinite(item.ptime) && item.ptime > 0);
-  }
-  function nextMedia() {
-    if (screen !== 'rolling') return;
-    stopMedia();
-    if (!playlist.length || failedMedia.size >= playlist.length) {
-      $('media-empty').hidden = false;
-      status('재생 가능한 홍보 미디어가 없습니다. commonfiles와 JSON 설정을 확인해주세요.');
-      return;
+  function normalizeSchedule(entry, required = false) {
+    if (!entry) return null;
+    const isDay = value => typeof value === 'string' && /^\d{8}$/.test(value);
+    const isTime = value => typeof value === 'string' && /^(?:[01]\d|2[0-3])[0-5]\d(?:[0-5]\d)?$/.test(value);
+    const schedule = {};
+    for (const [key, valid] of Object.entries({ sday: isDay, eday: isDay, stime: isTime, etime: isTime })) {
+      const value = entry[key];
+      if (!required && (value == null || value === '')) continue;
+      if (!valid(value)) return null;
+      schedule[key] = value.slice(0, key.endsWith('time') ? 4 : 8);
     }
-    $('media-empty').hidden = true;
-    do { mediaIndex = (mediaIndex + 1) % playlist.length; } while (failedMedia.has(mediaIndex));
-    const item = playlist[mediaIndex], index = mediaIndex, token = mediaRevision;
+    return schedule;
+  }
+  function scheduleTime() {
+    const now = new Date();
+    const twoDigits = value => String(value).padStart(2, '0');
+    return {
+      day: `${now.getFullYear()}${twoDigits(now.getMonth() + 1)}${twoDigits(now.getDate())}`,
+      time: `${twoDigits(now.getHours())}${twoDigits(now.getMinutes())}`
+    };
+  }
+  function isScheduled({ sday, eday, stime, etime }, { day, time }) {
+    return (!sday || sday <= day) && (!eday || day <= eday) &&
+      (!stime || stime <= time) && (!etime || time <= etime);
+  }
+  function validDuration(seconds) {
+    return Number.isFinite(seconds) && seconds > 0 && seconds * 1000 <= 2147483647;
+  }
+  function validMedia(item, directories) {
+    return item && ['MOV', 'IMG'].includes(item.type) && localAsset(item.file_path, directories);
+  }
+  function normalizePlaylist(items) {
+    const paneCounts = new Map([['1', 1], ['2A', 2], ['2B', 2], ['3', 3]]);
+    const groups = [];
+    for (const entry of Array.isArray(items) ? items : []) {
+      const schedule = normalizeSchedule(entry);
+      if (!schedule) continue;
+      const layout = entry.layout ?? '1';
+      const contents = entry.contents ?? [entry];
+      const fullTime = entry.full_time ?? (entry.contents == null ? entry.ptime : undefined);
+      if (Array.isArray(contents) && contents.length === paneCounts.get(layout) &&
+          contents.every(item => validMedia(item, ['commonfiles']) && validDuration(item.ptime)) &&
+          validDuration(fullTime)) {
+        groups.push({ layout, contents, fullTime, schedule });
+      }
+    }
+    return groups;
+  }
+  function createMediaPane(item, { muted = true, onFailure } = {}) {
+    const pane = document.createElement('div');
+    pane.className = 'media-pane';
+    pane.hidden = true;
     const isVideo = item.type === 'MOV';
-    const contain = item.ratio === 'contain';
     const element = document.createElement(isVideo ? 'video' : 'img');
-    currentMedia = element;
-    const active = () => screen === 'rolling' && token === mediaRevision && currentMedia === element;
-    const fail = () => {
-      if (!active()) return;
-      failedMedia.add(index);
-      status(`미디어를 건너뜁니다: ${item.file_path}`);
-      nextMedia();
-    };
-    const startDisplayTimer = () => {
-      if (!active()) return;
-      element.onplaying = element.onload = null;
-      clearTimeout(mediaTimer);
-      mediaTimer = setTimeout(() => { if (active()) nextMedia(); }, item.ptime * 1000);
-    };
-    element.onerror = fail;
-    $('media-player').append(element);
-    status(`롤링 ${index + 1}/${playlist.length} · ${item.file_path.split('/').pop()}`);
+    let loadTimer, repeatTimer, frame, stopped = false, drawFrame, resolveReady;
+    const ready = new Promise(resolve => { resolveReady = resolve; });
+    const hasVideoFrameCallback = typeof element.requestVideoFrameCallback === 'function';
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      clearTimeout(loadTimer);
+      clearInterval(repeatTimer);
+      element.onload = element.onloadeddata = element.onerror = null;
+      if (isVideo) {
+        if (frame != null) {
+          if (hasVideoFrameCallback) element.cancelVideoFrameCallback(frame);
+          else cancelAnimationFrame(frame);
+        }
+        element.pause();
+        element.removeAttribute('src');
+        element.load();
+      }
+      resolveReady();
+    }
+    function fail() {
+      if (stopped) return;
+      stop();
+      pane.replaceChildren();
+      onFailure?.(item);
+    }
+    function loaded() {
+      clearTimeout(loadTimer);
+      resolveReady();
+    }
+    pane.append(element);
     if (isVideo) {
       // WebView2 can initially paint its native video surface at the wrong zoom.
-      // Present decoded frames on a viewport-sized canvas instead of that surface.
+      // Draw decoded frames on a canvas sized to this pane.
       const canvas = document.createElement('canvas');
       canvas.setAttribute('aria-hidden', 'true');
       element.setAttribute('aria-hidden', 'true');
       const context = canvas.getContext('2d', { alpha: false });
-      const drawFrame = () => {
-        if (!active()) return;
+      drawFrame = () => {
+        if (stopped) return;
         if (element.readyState >= 2 && element.videoWidth && element.videoHeight) {
-          const bounds = canvas.getBoundingClientRect(), ratio = window.devicePixelRatio || 1;
-          const width = Math.max(1, Math.round(bounds.width * ratio)), height = Math.max(1, Math.round(bounds.height * ratio));
+          const bounds = canvas.getBoundingClientRect(), pixelScale = window.devicePixelRatio || 1;
+          const width = Math.max(1, Math.round(bounds.width * pixelScale)), height = Math.max(1, Math.round(bounds.height * pixelScale));
           if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
-          if (contain) {
-            const scale = Math.min(width / element.videoWidth, height / element.videoHeight);
-            const frameWidth = element.videoWidth * scale, frameHeight = element.videoHeight * scale;
-            context.clearRect(0, 0, width, height);
-            context.drawImage(element, (width - frameWidth) / 2, (height - frameHeight) / 2, frameWidth, frameHeight);
-          } else {
-            context.drawImage(element, 0, 0, width, height);
-          }
+          context.drawImage(element, 0, 0, width, height);
         }
-        mediaFrame = typeof element.requestVideoFrameCallback === 'function'
+        frame = hasVideoFrameCallback
           ? element.requestVideoFrameCallback(drawFrame) : requestAnimationFrame(drawFrame);
       };
-      $('media-player').append(canvas);
-      element.onloadeddata = drawFrame;
-      element.onplaying = startDisplayTimer;
-      element.muted = true; element.autoplay = true; element.playsInline = true; element.preload = 'auto';
+      pane.append(canvas);
+      element.onloadeddata = loaded;
+      element.muted = muted; element.playsInline = true; element.preload = 'auto';
       element.loop = true;
     } else {
-      element.alt = item.alt || '국방기술품질원 홍보 이미지';
-      element.style.objectFit = contain ? 'contain' : 'fill';
-      element.onload = startDisplayTimer;
+      element.alt = item.alt ?? '국방기술품질원 안내 이미지';
+      element.onload = loaded;
     }
-    mediaTimer = setTimeout(fail, isVideo ? 30000 : 15000);
+    element.onerror = fail;
+    loadTimer = setTimeout(fail, isVideo ? 30000 : 15000);
     element.src = item.file_path;
-    if (isVideo) element.play().catch(fail);
+    return {
+      pane, ready, stop,
+      start(deadline = Infinity) {
+        pane.hidden = false;
+        if (stopped || !isVideo) return;
+        drawFrame();
+        element.play().catch(fail);
+        const cycle = (item.ptime ?? 0) * 1000;
+        if (cycle > 0 && performance.now() + cycle < deadline) {
+          repeatTimer = setInterval(() => {
+            if (performance.now() < deadline) element.currentTime = 0;
+          }, cycle);
+        }
+      }
+    };
   }
-  function renderWelcome() {
-    const welcome = config.welcome || {};
-    const background = localAsset(welcome.background);
-    $('screen-welcome').style.backgroundImage = background ? `url("${encodeURI(background).replace(/"/g, '%22')}")` : '';
-    ['subtitle', 'title', 'message', 'scheduleTitle', 'schedule'].forEach(key => {
-      const id = 'welcome-' + key.replace(/[A-Z]/g, c => '-' + c.toLowerCase());
-      $(id).textContent = typeof welcome[key] === 'string' ? welcome[key] : '';
+  async function nextMedia(now = scheduleTime()) {
+    if (screen !== 'rolling') return;
+    stopMedia();
+    const empty = $('media-empty');
+    let index = -1;
+    for (let offset = 1; offset <= playlist.length; offset++) {
+      const candidate = (mediaIndex + offset) % playlist.length;
+      if (!failedGroups.has(candidate) && isScheduled(playlist[candidate].schedule, now)) {
+        index = candidate;
+        break;
+      }
+    }
+    if (index === -1) {
+      if (empty.hidden) status('현재 재생 가능한 홍보 미디어가 없습니다.');
+      empty.hidden = false;
+      return;
+    }
+    empty.hidden = true;
+    mediaIndex = index;
+    const entry = playlist[index];
+    const player = $('media-player');
+    const group = { entry, panes: [], timer: null };
+    currentGroup = group;
+    player.dataset.layout = entry.layout;
+    let remaining = entry.contents.length;
+    group.panes = entry.contents.map(item => createMediaPane(item, {
+      muted: false,
+      onFailure(failed) {
+        status(`미디어를 건너뜁니다: ${failed.file_path}`);
+        remaining--;
+        if (remaining === 0) {
+          failedGroups.add(index);
+          nextMedia();
+        }
+      }
+    }));
+    player.append(...group.panes.map(pane => pane.pane));
+    status(`롤링 ${index + 1}/${playlist.length} · ${entry.layout}분할`);
+    await Promise.all(group.panes.map(pane => pane.ready));
+    if (currentGroup !== group) return;
+    if (!isScheduled(entry.schedule, scheduleTime())) {
+      nextMedia();
+      return;
+    }
+    const duration = entry.fullTime * 1000;
+    const deadline = performance.now() + duration;
+    group.timer = setTimeout(nextMedia, duration);
+    group.panes.forEach(pane => pane.start(deadline));
+  }
+  function startRolling() {
+    failedGroups = new Set();
+    mediaIndex = -1;
+    show('rolling');
+    nextMedia();
+  }
+  async function playWelcome(welcome) {
+    stopMedia();
+    const foreground = createMediaPane(welcome.content, {
+      onFailure() {
+        failedWelcome.add(welcome);
+        updateWelcome();
+      }
     });
-    $('welcome-schedule-title').hidden = !welcome.scheduleTitle;
-    $('welcome-schedule').hidden = !welcome.schedule;
+    const group = { panes: [foreground] };
+    currentGroup = group;
+    $('welcome-player').append(foreground.pane);
+    if (welcome.background) {
+      const background = createMediaPane(welcome.background);
+      group.panes.push(background);
+      $('welcome-background').append(background.pane);
+    }
+    status('웰컴 미디어 재생 · 롤링 중지');
+    await Promise.all(group.panes.map(pane => pane.ready));
+    if (currentGroup !== group) return;
+    if (!isScheduled(welcome, scheduleTime())) {
+      updateWelcome();
+      return;
+    }
+    group.panes.forEach(pane => pane.start());
+  }
+  function updateWelcome(now = scheduleTime()) {
+    let nextWelcome;
+    for (const entry of welcomeList) {
+      if (!isScheduled(entry, now)) {
+        failedWelcome.delete(entry);
+      } else if (!failedWelcome.has(entry) && (!nextWelcome || entry.stime >= nextWelcome.stime)) {
+        nextWelcome = entry;
+      }
+    }
+    if (nextWelcome === activeWelcome && (!nextWelcome || currentGroup)) return Boolean(nextWelcome);
+    activeWelcome = nextWelcome;
+    if (!nextWelcome) {
+      startRolling();
+      return false;
+    }
+    if (screen !== 'welcome') {
+      revision++;
+      show('welcome');
+    }
+    playWelcome(nextWelcome);
+    return true;
+  }
+  function tickSchedule() {
+    const now = scheduleTime();
+    const isWelcomeActive = updateWelcome(now);
+    if (screen === 'rolling' && (!currentGroup || !isScheduled(currentGroup.entry.schedule, now))) nextMedia(now);
+    scheduleTimer = setTimeout(tickSchedule, 1000 - Date.now() % 1000);
+    return isWelcomeActive;
   }
   function setPhoto(id, path, fallback) {
     const image = $(id);
@@ -203,32 +355,24 @@
     if (!command) { report(Error('지원하지 않는 LED 명령 형식입니다.')); return false; }
     const token = ++revision;
     await ready;
-    if (token !== revision) return false;
+    if (token !== revision || updateWelcome()) return false;
     try {
       const { type, id } = command;
       text('debug-connection', message);
       if (type === 'rolling') {
-        failedMedia = new Set();
-        mediaIndex = -1;
-        show('rolling');
-        nextMedia();
-      } else if (type === 'welcome') {
-        renderWelcome(); show('welcome'); status('웰컴 화면 · 롤링 중지');
-        const updated = await json('data/kiosk_contents.json');
-        if (token !== revision) return false;
-        config.welcome = updated.welcome;
-        renderWelcome(); show('welcome'); status('웰컴 화면 · 롤링 중지');
+        if (screen !== 'rolling') startRolling();
       } else if (!id) {
         show(type === 'employee' ? 'employee-search' : 'weapon-search'); status('dtaq에서 검색한 정보를 LED로 전송해주세요.');
       } else {
         show(type === 'employee' ? 'employee-search' : 'weapon-search');
         status(`${id} 정보를 불러오고 있습니다.`);
-        // Re-read the source JSON on each command so external edits are reflected.
-        const data = await json(`data/${type === 'employee' ? 'employees' : type === 'project' ? 'projects' : 'weapons'}.json`);
-        if (token !== revision) return false;
-        const items = Array.isArray(data) ? data : data.weapons;
+        const data = type === 'project' ? await json('data/projects.json') : config;
+        if (token !== revision || updateWelcome()) return false;
+        const items = type === 'project'
+          ? (Array.isArray(data) ? data : data?.weapons)
+          : data?.[type === 'employee' ? 'employees_list' : 'weapons_list'];
         if (!Array.isArray(items)) throw Error('JSON 데이터 형식이 올바르지 않습니다.');
-        const item = items.find(entry => String(entry.id) === id);
+        const item = items.find(entry => entry?.id != null && String(entry.id) === id);
         if (!item) { show(type === 'employee' ? 'employee-search' : 'weapon-search'); throw Error(`${type === 'employee' ? '직원' : '무기 / 사업'} ID “${id}”를 찾을 수 없습니다.`); }
         if (type === 'employee') { renderEmployee(item); show('employee'); scrollCareer(); }
         else { renderWeapon(item, type === 'project'); show('weapon'); }
@@ -241,35 +385,52 @@
     $('employee-form').addEventListener('submit', event => { event.preventDefault(); window.SetRevMsg('MSG|EMP|' + $('debug-employee').value.trim()); });
     $('weapon-form').addEventListener('submit', event => { event.preventDefault(); window.SetRevMsg('MSG|WEP|' + $('debug-weapon').value.trim()); });
     $('debug-rolling').addEventListener('click', () => window.SetRevMsg('MSG|ROLLING'));
-    $('debug-welcome').addEventListener('click', () => window.SetRevMsg('MSG|WELCOME'));
     $('debug-collapse').addEventListener('click', () => { const collapsed = !$('debug-body').hidden; $('debug-body').hidden = collapsed; $('debug-collapse').textContent = collapsed ? '펼치기' : '접기'; $('debug-collapse').setAttribute('aria-expanded', String(!collapsed)); });
     $('debug-fullscreen').addEventListener('click', async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); } catch (error) { report(error); } });
     $('debug-panel').hidden = new URLSearchParams(location.search).get('debug') === '0';
     document.addEventListener('keydown', event => { if (event.key.toLowerCase() === 'd' && !event.ctrlKey && !event.altKey && !event.metaKey && !event.target.closest('input,textarea,select,[contenteditable]')) $('debug-panel').hidden = !$('debug-panel').hidden; });
   }
   async function boot() {
-    try { config = await json('data/kiosk_contents.json'); }
+    try { config = (await json('data/kiosk_contents.json')) || {}; }
     catch (error) { report(Error('data/kiosk_contents.json을 읽을 수 없습니다. HTTP 서버로 실행하고 JSON 문법을 확인해주세요.')); }
-    renderWelcome();
+    const entries = config.welcome?.welcome_list;
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const schedule = normalizeSchedule(entry, true);
+      if (!schedule) continue;
+      const content = { type: entry.type, file_path: entry.file_path, alt: entry.alt };
+      const background = { type: entry.bg_type ?? 'IMG', file_path: entry.bg_path ?? entry.background, alt: '' };
+      if (validMedia(content, ['commonfiles'])) {
+        welcomeList.push({ ...schedule, content, background: validMedia(background) ? background : null });
+      }
+    }
     playlist = normalizePlaylist(config.notice?.notice_list);
-    if (!revision) { show(config.welcome?.show === true ? 'welcome' : 'rolling'); if (screen === 'rolling') nextMedia(); }
-    const lists = await Promise.allSettled([json('data/employees.json'), json('data/weapons.json'), json('data/projects.json')]);
-    lists.forEach((result, index) => {
-      if (result.status !== 'fulfilled') { status('일부 JSON을 불러오지 못했습니다. 데이터 파일을 확인해주세요.'); return; }
-      const items = Array.isArray(result.value) ? result.value : result.value.weapons;
-      if (!Array.isArray(items)) return;
-      for (const item of items) { const option = document.createElement('option'); option.value = item.id; option.label = `${item.name} · ${item.dept || ''}`; $(index === 0 ? 'employee-ids' : 'weapon-ids').append(option); }
-    });
+    if (!tickSchedule() && !revision) startRolling();
+    for (const [listId, items] of [['employee-ids', config.employees_list], ['weapon-ids', config.weapons_list]]) {
+      if (!Array.isArray(items)) continue;
+      const list = $(listId);
+      for (const item of items) {
+        if (item?.id == null) continue;
+        const option = document.createElement('option');
+        option.value = item.id;
+        option.label = `${item.name} · ${item.dept || ''}`;
+        list.append(option);
+      }
+    }
   }
   window.SetRevMsg = SetRevMsg;
   resize(); window.addEventListener('resize', resize); initDebug();
   const ready = boot();
   window.DTAQ_LED = Object.freeze({ ready, getState: () => ({ screen, mediaIndex, mediaCount: playlist.length }) });
   if (window.chrome?.webview) window.chrome.webview.addEventListener('message', event => window.SetRevMsg(event.data));
-  window.addEventListener('pagehide', () => { stopMedia(); cancelAnimationFrame(careerFrame); });
+  window.addEventListener('pagehide', () => {
+    clearTimeout(scheduleTimer);
+    stopMedia();
+    cancelAnimationFrame(careerFrame);
+  });
+  window.addEventListener('pageshow', event => { if (event.persisted) tickSchedule(); });
   ready.then(() => {
     const params = new URLSearchParams(location.search), type = params.get('screen');
-    const action = { rolling: 'ROLLING', welcome: 'WELCOME', employee: 'EMP', weapon: 'WEP', project: 'WEP' }[type];
+    const action = { rolling: 'ROLLING', employee: 'EMP', weapon: 'WEP', project: 'WEP' }[type];
     if (action && !revision) window.SetRevMsg('MSG|' + action + (['EMP', 'WEP'].includes(action) ? '|' + (params.get('id') || '') : ''));
   });
 })();
