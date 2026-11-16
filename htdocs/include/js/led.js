@@ -8,8 +8,8 @@
   let playlist = [], mediaIndex = -1, failedGroups = new Set();
   let welcomeList = [], activeWelcome;
   const failedWelcome = new Set();
-  const status = text => { $('debug-status').textContent = text; };
-  const text = (id, value) => { $(id).textContent = value == null || value === '' ? '—' : String(value); };
+  const status = value => { if ($('debug-status')) $('debug-status').textContent = value; };
+  const text = (id, value) => { const element = $(id); if (element) element.textContent = value == null || value === '' ? '—' : String(value); };
   function localAsset(value, directories = ['images', 'commonfiles']) {
     if (typeof value !== 'string' || value.includes('\\') || /[?#\x00-\x1f]/.test(value)) return '';
     const parts = value.split('/');
@@ -44,7 +44,7 @@
     cancelAnimationFrame(careerFrame);
     screen = next;
     document.querySelectorAll('.screen').forEach(el => { el.hidden = el.id !== `screen-${next}`; });
-    $('debug-panel').dataset.screen = next;
+    if ($('debug-panel')) $('debug-panel').dataset.screen = next;
     text('debug-screen', labels[next]);
     $('notice').hidden = true;
     clearTimeout(noticeTimer);
@@ -352,7 +352,7 @@
   }
   async function SetRevMsg(message) {
     const command = protocol.normalize(message);
-    if (!command) { report(Error('지원하지 않는 LED 명령 형식입니다.')); return false; }
+    if (!command) { console.log('[DTaQ LED] 지원하지 않는 LED 신호:', message); return false; }
     const token = ++revision;
     await ready;
     if (token !== revision || updateWelcome()) return false;
@@ -382,6 +382,7 @@
     } catch (error) { if (token === revision) report(error); return false; }
   }
   function initDebug() {
+    if (!$('debug-panel')) return;
     $('employee-form').addEventListener('submit', event => { event.preventDefault(); window.SetRevMsg('MSG|EMP|' + $('debug-employee').value.trim()); });
     $('weapon-form').addEventListener('submit', event => { event.preventDefault(); window.SetRevMsg('MSG|WEP|' + $('debug-weapon').value.trim()); });
     $('debug-rolling').addEventListener('click', () => window.SetRevMsg('MSG|ROLLING'));
