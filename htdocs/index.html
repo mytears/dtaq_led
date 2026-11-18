@@ -9,52 +9,63 @@
   <script defer src="include/js/led.js"></script>
 </head>
 <body>
-  <section id="screen-rolling" class="screen" aria-label="홍보 영상 및 이미지">
-    <div id="media-player"></div>
-    <p id="media-empty" hidden>홍보 이미지와 영상을 준비하고 있습니다.</p>
-  </section>
-  <section id="screen-welcome" class="screen" aria-label="방문 환영" hidden>
-    <div id="welcome-background" aria-hidden="true"></div>
-    <div id="welcome-player"></div>
-  </section>
+  <template id="rolling-template">
+    <section class="screen" aria-label="홍보 영상 및 이미지">
+      <div class="media-player"></div>
+    </section>
+  </template>
+  <template id="welcome-template">
+    <section class="screen welcome-screen" aria-label="방문 환영">
+      <div class="welcome-background" aria-hidden="true"></div>
+      <div class="welcome-player"></div>
+    </section>
+  </template>
   <main id="led-stage" aria-label="국방기술품질원 LED 안내 화면">
-    <section id="screen-employee-search" class="screen employee-background" aria-label="직원 정보 검색 대기" hidden>
-      <div class="search-card"><div class="search-copy"><h1>직원 정보 검색</h1><p>성명 · 부서 · 담당업무로 검색합니다.</p></div><img src="images/0_img_1.png" alt=""></div>
+    <section id="screen-rolling" class="screen" aria-label="홍보 영상 및 이미지" hidden></section>
+    <section id="screen-employee-search" class="screen" aria-label="직원 정보 검색 대기" hidden>
+      <div class="artboard employee-background">
+        <div class="search-card"><div class="search-copy"><h1>직원 정보 검색</h1><p>성명 · 부서 · 담당업무로 검색합니다.</p></div><img src="images/0_img_1.png" alt=""></div>
+      </div>
     </section>
-    <section id="screen-weapon-search" class="screen weapon-background" aria-label="주요 사업 검색 대기" hidden>
-      <div class="search-card"><div class="search-copy"><h1>주요 사업 검색</h1><p>무기체계를 검색하실 수 있습니다.</p></div><img src="images/0_img_2.png" alt=""></div>
+    <section id="screen-weapon-search" class="screen" aria-label="주요 사업 검색 대기" hidden>
+      <div class="artboard weapon-background">
+        <div class="search-card"><div class="search-copy"><h1>주요 사업 검색</h1><p>무기체계를 검색하실 수 있습니다.</p></div><img src="images/0_img_2.png" alt=""></div>
+      </div>
     </section>
-    <section id="screen-employee" class="screen employee-background" aria-label="직원 정보" hidden>
-      <article class="panel employee-profile">
-        <img id="employee-photo" class="employee-photo" src="images/img_photo.png" alt="직원 사진">
-        <table class="employee-table"><tbody>
-          <tr><th scope="row">성명</th><td id="employee-name"></td></tr>
-          <tr><th scope="row">사번</th><td id="employee-id"></td></tr>
-          <tr><th scope="row">근무지</th><td id="employee-dept"></td></tr>
-          <tr><th scope="row">직급</th><td id="employee-pos"></td></tr>
-          <tr><th scope="row">담당업무</th><td id="employee-duties"></td></tr>
-          <tr><th scope="row">이메일</th><td id="employee-email"></td></tr>
-          <tr><th scope="row">연락처</th><td id="employee-phone"></td></tr>
-        </tbody></table>
-      </article>
-      <article class="panel employee-career"><h2><img src="images/ico_career.svg" alt="">근무이력</h2><div id="career-viewport"><ol id="employee-history"></ol></div></article>
+    <section id="screen-employee" class="screen" aria-label="직원 정보" hidden>
+      <div class="artboard employee-background">
+        <article class="panel employee-profile">
+          <img id="employee-photo" class="employee-photo" alt="" hidden>
+          <table class="employee-table"><tbody>
+            <tr><th scope="row">성명</th><td id="employee-name"></td></tr>
+            <tr><th scope="row">사번</th><td id="employee-id"></td></tr>
+            <tr><th scope="row">근무지</th><td id="employee-dept"></td></tr>
+            <tr><th scope="row">직급</th><td id="employee-pos"></td></tr>
+            <tr><th scope="row">담당업무</th><td id="employee-duties"></td></tr>
+            <tr><th scope="row">이메일</th><td id="employee-email"></td></tr>
+            <tr><th scope="row">연락처</th><td id="employee-phone"></td></tr>
+          </tbody></table>
+        </article>
+        <article class="panel employee-career"><h2><img src="images/ico_career.svg" alt="">근무이력</h2><div id="career-viewport"><ol id="employee-history"></ol></div></article>
+      </div>
     </section>
-    <section id="screen-weapon" class="screen weapon-background" aria-label="무기 및 사업 정보" hidden>
-      <article class="panel weapon-card">
-        <h1 id="weapon-name"></h1>
-        <div id="weapon-branch"><img id="weapon-branch-icon" src="images/ico_army_1.svg" alt=""><span id="weapon-branch-name"></span></div>
-        <div class="weapon-photo"><img id="weapon-image" alt=""><div id="weapon-image-empty"><img src="images/img_logo.png" alt="국방기술품질원"><span>이미지 준비중</span></div></div>
-        <table class="weapon-table"><tbody>
-          <tr><th scope="row" id="weapon-label-1">개발형태</th><td id="weapon-development"></td></tr>
-          <tr><th scope="row" id="weapon-label-2">제조업체</th><td id="weapon-manufacturer"></td></tr>
-          <tr><th scope="row">사업기간 / 양산</th><td id="weapon-period"></td></tr>
-          <tr class="performance-row"><th scope="row">주요성능</th><td id="weapon-performance"></td></tr>
-          <tr class="description-row"><th scope="row">기타</th><td id="weapon-description"></td></tr>
-        </tbody></table>
-      </article>
+    <section id="screen-weapon" class="screen" aria-label="무기 및 사업 정보" hidden>
+      <div class="artboard weapon-background">
+        <article class="panel weapon-card">
+          <h1 id="weapon-name"></h1>
+          <div id="weapon-branch"><img id="weapon-branch-icon" src="images/ico_army_1.svg" alt=""><span id="weapon-branch-name"></span></div>
+          <div class="weapon-photo"><img id="weapon-image" alt="" hidden></div>
+          <table class="weapon-table"><tbody>
+            <tr><th scope="row" id="weapon-label-1">개발형태</th><td id="weapon-development"></td></tr>
+            <tr><th scope="row" id="weapon-label-2">제조업체</th><td id="weapon-manufacturer"></td></tr>
+            <tr><th scope="row">사업기간 / 양산</th><td id="weapon-period"></td></tr>
+            <tr class="performance-row"><th scope="row">주요성능</th><td id="weapon-performance"></td></tr>
+            <tr class="description-row"><th scope="row">기타</th><td id="weapon-description"></td></tr>
+          </tbody></table>
+        </article>
+      </div>
     </section>
   </main>
-  <div id="screen-fade" aria-hidden="true"></div>
   <!-- 디버그 UI 임시 비활성화
   <aside id="debug-panel" aria-label="LED 디버그">
     <header><strong><i></i> LED DEBUG</strong><button id="debug-collapse" type="button" aria-expanded="true" aria-controls="debug-body">접기</button></header>
@@ -69,7 +80,6 @@
     </div>
   </aside>
   -->
-  <div id="notice" role="alert" hidden></div>
   <datalist id="employee-ids"></datalist><datalist id="weapon-ids"></datalist>
 </body>
 </html>

@@ -4,7 +4,7 @@
     if (typeof input !== 'string') return null;
     const parts = input.trim().split('|');
     if (parts[0] !== 'MSG' || parts.some(part => /[\x00-\x1f]/.test(part))) return null;
-    if (parts.length === 2 && parts[1] === 'ROLLING') return { type: 'rolling', id: '' };
+    if (parts.length === 2 && ['ROLLING', 'WELCOME'].includes(parts[1])) return { type: 'rolling', id: '' };
     if ((parts.length === 2 || parts.length === 3) && ['EMP', 'WEP'].includes(parts[1])) {
       const id = (parts[2] || '').trim();
       return { type: parts[1] === 'EMP' ? 'employee' : /^PRJ-/i.test(id) ? 'project' : 'weapon', id };
