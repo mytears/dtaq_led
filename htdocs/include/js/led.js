@@ -3,17 +3,19 @@
   const $ = id => document.getElementById(id);
   const protocol = window.LedProtocol;
   const labels = { rolling: '홍보 미디어 롤링', welcome: '웰컴', 'employee-search': '직원 검색 대기', employee: '직원 정보', 'weapon-search': '주요 사업 검색 대기', weapon: '무기 / 사업 정보' };
+  const fadeDuration = 250;
   let config = {};
-  let screen = '', revision = 0, currentGroup, careerFrame, noticeTimer, scheduleTimer;
+  let screen = '', revision = 0, pendingScreen, fadeAnimation, careerFrame, noticeTimer, scheduleTimer;
+  let currentGroup, fadingGroup;
   let playlist = [], mediaIndex = -1, failedGroups = new Set();
   let welcomeList = [], activeWelcome;
   const failedWelcome = new Set();
   const status = value => { if ($('debug-status')) $('debug-status').textContent = value; };
   const text = (id, value) => { const element = $(id); if (element) element.textContent = value == null || value === '' ? '—' : String(value); };
-  function localAsset(value, directories = ['images', 'commonfiles']) {
+  function localAsset(value) {
     if (typeof value !== 'string' || value.includes('\\') || /[?#\x00-\x1f]/.test(value)) return '';
     const parts = value.split('/');
-    return directories.includes(parts[0]) && parts.length > 1 && parts.every(p => p && p !== '..' && p !== '.') ? value : '';
+    return ['images', 'commonfiles'].includes(parts[0]) && parts.length > 1 && parts.every(p => p && p !== '..' && p !== '.') ? value : '';
   }
   async function json(path) {
     const response = await fetch(path, { cache: 'no-store' });
@@ -29,25 +31,65 @@
     noticeTimer = setTimeout(() => { $('notice').hidden = true; }, 7000);
     console.error('[DTaQ LED]', error);
   }
-  function stopMedia() {
+  function freezeMedia() {
     if (!currentGroup) return;
-    const group = currentGroup;
+    fadingGroup = currentGroup;
     currentGroup = null;
-    clearTimeout(group.timer);
-    group.panes.forEach(pane => {
+    clearTimeout(fadingGroup.timer);
+    fadingGroup.panes.forEach(pane => pane.freeze());
+  }
+  function stopMedia() {
+    freezeMedia();
+    if (!fadingGroup) return;
+    fadingGroup.panes.forEach(pane => {
       pane.stop();
       pane.pane.remove();
     });
+    fadingGroup = null;
   }
   function show(next) {
-    stopMedia();
-    cancelAnimationFrame(careerFrame);
     screen = next;
     document.querySelectorAll('.screen').forEach(el => { el.hidden = el.id !== `screen-${next}`; });
     if ($('debug-panel')) $('debug-panel').dataset.screen = next;
     text('debug-screen', labels[next]);
     $('notice').hidden = true;
     clearTimeout(noticeTimer);
+  }
+  function fadeTo(opacity, duration = fadeDuration) {
+    const overlay = $('screen-fade');
+    if (overlay.style.opacity !== String(opacity)) {
+      const from = Number(getComputedStyle(overlay).opacity);
+      fadeAnimation?.cancel();
+      overlay.style.opacity = opacity;
+      fadeAnimation = from === opacity ? null : overlay.animate([{ opacity: from }, { opacity }], {
+        duration, easing: 'ease-in-out'
+      });
+    }
+    return fadeAnimation?.finished.catch(() => {});
+  }
+  async function transitionTo(next, prepare, fadeInDuration) {
+    if (screen === next && !pendingScreen && !prepare) {
+      show(next);
+      return true;
+    }
+    const transition = { screen: next };
+    pendingScreen = transition;
+    // Keep the last canvas frame visible until the overlay covers it.
+    freezeMedia();
+    cancelAnimationFrame(careerFrame);
+    await fadeTo(1);
+    if (pendingScreen !== transition) return false;
+    stopMedia();
+    show(next);
+    try {
+      await prepare?.();
+      return pendingScreen === transition;
+    } finally {
+      if (pendingScreen === transition) {
+        pendingScreen = null;
+        fadeTo(0, fadeInDuration);
+      }
+    }
   }
   function resize() {
     document.documentElement.style.setProperty('--stage-scale', Math.min(innerWidth / 3200, innerHeight / 1200));
@@ -80,8 +122,16 @@
   function validDuration(seconds) {
     return Number.isFinite(seconds) && seconds > 0 && seconds * 1000 <= 2147483647;
   }
-  function validMedia(item, directories) {
-    return item && ['MOV', 'IMG'].includes(item.type) && localAsset(item.file_path, directories);
+  function validMedia(item) {
+    if (!item || !['MOV', 'IMG'].includes(item.type)) return false;
+    const path = item.file_path;
+    if (typeof path !== 'string' || !path.trim() || /[\\\x00-\x1f]/.test(path)) return false;
+    try {
+      const url = new URL(path, document.baseURI);
+      return /^https?:$/.test(url.protocol) && url.origin === location.origin;
+    } catch {
+      return false;
+    }
   }
   function normalizePlaylist(items) {
     const paneCounts = new Map([['1', 1], ['2A', 2], ['2B', 2], ['3', 3]]);
@@ -93,7 +143,7 @@
       const contents = entry.contents ?? [entry];
       const fullTime = entry.full_time ?? (entry.contents == null ? entry.ptime : undefined);
       if (Array.isArray(contents) && contents.length === paneCounts.get(layout) &&
-          contents.every(item => validMedia(item, ['commonfiles']) && validDuration(item.ptime)) &&
+          contents.every(item => validMedia(item) && validDuration(item.ptime)) &&
           validDuration(fullTime)) {
         groups.push({ layout, contents, fullTime, schedule });
       }
@@ -106,30 +156,37 @@
     pane.hidden = true;
     const isVideo = item.type === 'MOV';
     const element = document.createElement(isVideo ? 'video' : 'img');
-    let loadTimer, repeatTimer, frame, stopped = false, drawFrame, resolveReady;
+    let loadTimer, repeatTimer, frame, frozen = false, stopped = false, drawFrame, resolveReady;
     const ready = new Promise(resolve => { resolveReady = resolve; });
     const hasVideoFrameCallback = typeof element.requestVideoFrameCallback === 'function';
-    function stop() {
-      if (stopped) return;
-      stopped = true;
+    function freeze() {
+      if (frozen) return;
+      frozen = true;
       clearTimeout(loadTimer);
       clearInterval(repeatTimer);
-      element.onload = element.onloadeddata = element.onerror = null;
+      element.onload = element.onloadeddata = element.onended = element.onerror = null;
       if (isVideo) {
         if (frame != null) {
           if (hasVideoFrameCallback) element.cancelVideoFrameCallback(frame);
           else cancelAnimationFrame(frame);
         }
         element.pause();
+      }
+    }
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      freeze();
+      if (isVideo) {
         element.removeAttribute('src');
         element.load();
       }
       resolveReady();
     }
     function fail() {
-      if (stopped) return;
+      if (frozen) return;
       stop();
-      pane.replaceChildren();
+      if (!isVideo) pane.replaceChildren();
       onFailure?.(item);
     }
     function loaded() {
@@ -145,7 +202,7 @@
       element.setAttribute('aria-hidden', 'true');
       const context = canvas.getContext('2d', { alpha: false });
       drawFrame = () => {
-        if (stopped) return;
+        if (frozen) return;
         if (element.readyState >= 2 && element.videoWidth && element.videoHeight) {
           const bounds = canvas.getBoundingClientRect(), pixelScale = window.devicePixelRatio || 1;
           const width = Math.max(1, Math.round(bounds.width * pixelScale)), height = Math.max(1, Math.round(bounds.height * pixelScale));
@@ -158,7 +215,6 @@
       pane.append(canvas);
       element.onloadeddata = loaded;
       element.muted = muted; element.playsInline = true; element.preload = 'auto';
-      element.loop = true;
     } else {
       element.alt = item.alt ?? '국방기술품질원 안내 이미지';
       element.onload = loaded;
@@ -167,24 +223,27 @@
     loadTimer = setTimeout(fail, isVideo ? 30000 : 15000);
     element.src = item.file_path;
     return {
-      pane, ready, stop,
+      pane, ready, freeze, stop,
       start(deadline = Infinity) {
         pane.hidden = false;
-        if (stopped || !isVideo) return;
+        if (frozen || !isVideo) return;
         drawFrame();
+        const restart = () => {
+          // Keep the last frame if a repeat would be visible only briefly before the cut.
+          if (frozen || performance.now() + fadeDuration >= deadline) return;
+          element.currentTime = 0;
+          if (element.paused) element.play().catch(fail);
+        };
+        element.onended = restart;
         element.play().catch(fail);
         const cycle = (item.ptime ?? 0) * 1000;
-        if (cycle > 0 && performance.now() + cycle < deadline) {
-          repeatTimer = setInterval(() => {
-            if (performance.now() < deadline) element.currentTime = 0;
-          }, cycle);
+        if (cycle > 0 && performance.now() + cycle + fadeDuration < deadline) {
+          repeatTimer = setInterval(restart, cycle);
         }
       }
     };
   }
-  async function nextMedia(now = scheduleTime()) {
-    if (screen !== 'rolling') return;
-    stopMedia();
+  function nextMedia(now = scheduleTime()) {
     const empty = $('media-empty');
     let index = -1;
     for (let offset = 1; offset <= playlist.length; offset++) {
@@ -195,72 +254,75 @@
       }
     }
     if (index === -1) {
-      if (empty.hidden) status('현재 재생 가능한 홍보 미디어가 없습니다.');
-      empty.hidden = false;
-      return;
+      if (screen === 'rolling' && !pendingScreen && !currentGroup && !empty.hidden) return;
+      return transitionTo('rolling', () => {
+        status('현재 재생 가능한 홍보 미디어가 없습니다.');
+        empty.hidden = false;
+      });
     }
-    empty.hidden = true;
     mediaIndex = index;
     const entry = playlist[index];
-    const player = $('media-player');
-    const group = { entry, panes: [], timer: null };
-    currentGroup = group;
-    player.dataset.layout = entry.layout;
-    let remaining = entry.contents.length;
-    group.panes = entry.contents.map(item => createMediaPane(item, {
-      muted: false,
-      onFailure(failed) {
-        status(`미디어를 건너뜁니다: ${failed.file_path}`);
-        remaining--;
-        if (remaining === 0) {
-          failedGroups.add(index);
-          nextMedia();
-        }
-      }
-    }));
-    player.append(...group.panes.map(pane => pane.pane));
-    status(`롤링 ${index + 1}/${playlist.length} · ${entry.layout}분할`);
-    await Promise.all(group.panes.map(pane => pane.ready));
-    if (currentGroup !== group) return;
-    if (!isScheduled(entry.schedule, scheduleTime())) {
-      nextMedia();
-      return;
-    }
     const duration = entry.fullTime * 1000;
-    const deadline = performance.now() + duration;
-    group.timer = setTimeout(nextMedia, duration);
-    group.panes.forEach(pane => pane.start(deadline));
+    return transitionTo('rolling', async () => {
+      empty.hidden = true;
+      const player = $('media-player');
+      const group = { entry, panes: [], timer: null };
+      currentGroup = group;
+      player.dataset.layout = entry.layout;
+      let remaining = entry.contents.length;
+      group.panes = entry.contents.map(item => createMediaPane(item, {
+        muted: false,
+        onFailure(failed) {
+          status(`미디어를 건너뜁니다: ${failed.file_path}`);
+          if (--remaining === 0) {
+            failedGroups.add(index);
+            nextMedia();
+          }
+        }
+      }));
+      player.append(...group.panes.map(pane => pane.pane));
+      status(`롤링 ${index + 1}/${playlist.length} · ${entry.layout}분할`);
+      await Promise.all(group.panes.map(pane => pane.ready));
+      if (currentGroup !== group) return;
+      if (!isScheduled(entry.schedule, scheduleTime())) {
+        nextMedia();
+        return;
+      }
+      const deadline = performance.now() + duration;
+      group.timer = setTimeout(nextMedia, duration);
+      group.panes.forEach(pane => pane.start(deadline));
+    }, Math.min(fadeDuration, duration / 2));
   }
   function startRolling() {
     failedGroups = new Set();
     mediaIndex = -1;
-    show('rolling');
     nextMedia();
   }
-  async function playWelcome(welcome) {
-    stopMedia();
-    const foreground = createMediaPane(welcome.content, {
-      onFailure() {
-        failedWelcome.add(welcome);
-        updateWelcome();
+  function playWelcome(welcome) {
+    return transitionTo('welcome', async () => {
+      const foreground = createMediaPane(welcome.content, {
+        onFailure() {
+          failedWelcome.add(welcome);
+          updateWelcome();
+        }
+      });
+      const group = { panes: [foreground] };
+      currentGroup = group;
+      $('welcome-player').append(foreground.pane);
+      if (welcome.background) {
+        const background = createMediaPane(welcome.background);
+        group.panes.push(background);
+        $('welcome-background').append(background.pane);
       }
+      status('웰컴 미디어 재생 · 롤링 중지');
+      await Promise.all(group.panes.map(pane => pane.ready));
+      if (currentGroup !== group) return;
+      if (!isScheduled(welcome, scheduleTime())) {
+        updateWelcome();
+        return;
+      }
+      group.panes.forEach(pane => pane.start());
     });
-    const group = { panes: [foreground] };
-    currentGroup = group;
-    $('welcome-player').append(foreground.pane);
-    if (welcome.background) {
-      const background = createMediaPane(welcome.background);
-      group.panes.push(background);
-      $('welcome-background').append(background.pane);
-    }
-    status('웰컴 미디어 재생 · 롤링 중지');
-    await Promise.all(group.panes.map(pane => pane.ready));
-    if (currentGroup !== group) return;
-    if (!isScheduled(welcome, scheduleTime())) {
-      updateWelcome();
-      return;
-    }
-    group.panes.forEach(pane => pane.start());
   }
   function updateWelcome(now = scheduleTime()) {
     let nextWelcome;
@@ -271,23 +333,22 @@
         nextWelcome = entry;
       }
     }
-    if (nextWelcome === activeWelcome && (!nextWelcome || currentGroup)) return Boolean(nextWelcome);
+    if (nextWelcome === activeWelcome &&
+        (!nextWelcome || currentGroup || pendingScreen?.screen === 'welcome')) return Boolean(nextWelcome);
     activeWelcome = nextWelcome;
     if (!nextWelcome) {
       startRolling();
       return false;
     }
-    if (screen !== 'welcome') {
-      revision++;
-      show('welcome');
-    }
+    if ((pendingScreen?.screen ?? screen) !== 'welcome') revision++;
     playWelcome(nextWelcome);
     return true;
   }
   function tickSchedule() {
     const now = scheduleTime();
     const isWelcomeActive = updateWelcome(now);
-    if (screen === 'rolling' && (!currentGroup || !isScheduled(currentGroup.entry.schedule, now))) nextMedia(now);
+    if ((pendingScreen?.screen ?? screen) === 'rolling' &&
+        (currentGroup ? !isScheduled(currentGroup.entry.schedule, now) : !pendingScreen)) nextMedia(now);
     scheduleTimer = setTimeout(tickSchedule, 1000 - Date.now() % 1000);
     return isWelcomeActive;
   }
@@ -345,7 +406,7 @@
     const performance = Array.isArray(weapon.performance) ? weapon.performance : [weapon.performance || (project ? weapon.desc : '자료 준비중')];
     performance.forEach(value => { const line = document.createElement('div'); line.textContent = value; $('weapon-performance').append(line); });
     text('weapon-description', weapon.description || weapon.desc || '자료 준비중');
-    const path = localAsset(weapon.image);
+    const path = typeof weapon.image === 'string' ? weapon.image.trim() : '';
     $('weapon-image').hidden = !path; $('weapon-image-empty').hidden = !!path;
     $('weapon-image').onerror = () => { $('weapon-image').hidden = true; $('weapon-image-empty').hidden = false; };
     if (path) { $('weapon-image').src = path; $('weapon-image').alt = weapon.name || '무기체계 이미지'; }
@@ -356,15 +417,17 @@
     const token = ++revision;
     await ready;
     if (token !== revision || updateWelcome()) return false;
+    const { type, id } = command;
+    const search = type === 'employee' ? 'employee-search' : 'weapon-search';
     try {
-      const { type, id } = command;
       text('debug-connection', message);
       if (type === 'rolling') {
-        if (screen !== 'rolling') startRolling();
+        if ((pendingScreen?.screen ?? screen) !== 'rolling') startRolling();
       } else if (!id) {
-        show(type === 'employee' ? 'employee-search' : 'weapon-search'); status('dtaq에서 검색한 정보를 LED로 전송해주세요.');
+        if (!await transitionTo(search) || token !== revision) return false;
+        status('dtaq에서 검색한 정보를 LED로 전송해주세요.');
       } else {
-        show(type === 'employee' ? 'employee-search' : 'weapon-search');
+        if (type === 'project') transitionTo(search);
         status(`${id} 정보를 불러오고 있습니다.`);
         const data = type === 'project' ? await json('data/projects.json') : config;
         if (token !== revision || updateWelcome()) return false;
@@ -373,13 +436,21 @@
           : data?.[type === 'employee' ? 'employees_list' : 'weapons_list'];
         if (!Array.isArray(items)) throw Error('JSON 데이터 형식이 올바르지 않습니다.');
         const item = items.find(entry => entry?.id != null && String(entry.id) === id);
-        if (!item) { show(type === 'employee' ? 'employee-search' : 'weapon-search'); throw Error(`${type === 'employee' ? '직원' : '무기 / 사업'} ID “${id}”를 찾을 수 없습니다.`); }
-        if (type === 'employee') { renderEmployee(item); show('employee'); scrollCareer(); }
-        else { renderWeapon(item, type === 'project'); show('weapon'); }
+        if (!item) throw Error(`${type === 'employee' ? '직원' : '무기 / 사업'} ID “${id}”를 찾을 수 없습니다.`);
+        const completed = type === 'employee'
+          ? await transitionTo('employee', () => { renderEmployee(item); scrollCareer(); })
+          : await transitionTo('weapon', () => renderWeapon(item, type === 'project'));
+        if (!completed || token !== revision) return false;
         status(`${item.name} · ${id}`);
       }
       return true;
-    } catch (error) { if (token === revision) report(error); return false; }
+    } catch (error) {
+      if (token === revision) {
+        await transitionTo(search);
+        if (token === revision) report(error);
+      }
+      return false;
+    }
   }
   function initDebug() {
     if (!$('debug-panel')) return;
@@ -400,7 +471,7 @@
       if (!schedule) continue;
       const content = { type: entry.type, file_path: entry.file_path, alt: entry.alt };
       const background = { type: entry.bg_type ?? 'IMG', file_path: entry.bg_path ?? entry.background, alt: '' };
-      if (validMedia(content, ['commonfiles'])) {
+      if (validMedia(content)) {
         welcomeList.push({ ...schedule, content, background: validMedia(background) ? background : null });
       }
     }
@@ -425,6 +496,10 @@
   if (window.chrome?.webview) window.chrome.webview.addEventListener('message', event => window.SetRevMsg(event.data));
   window.addEventListener('pagehide', () => {
     clearTimeout(scheduleTimer);
+    pendingScreen = null;
+    fadeAnimation?.cancel();
+    fadeAnimation = null;
+    $('screen-fade').style.opacity = 0;
     stopMedia();
     cancelAnimationFrame(careerFrame);
   });

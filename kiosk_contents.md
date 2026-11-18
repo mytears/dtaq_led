@@ -1,6 +1,6 @@
 # LED 키오스크 설정 안내
 
-LED 페이지는 [htdocs/data/kiosk_contents.json](htdocs/data/kiosk_contents.json)을 읽습니다. `welcome.welcome_list`에는 방문 환영 일정을, `notice.notice_list`에는 반복 재생할 홍보 콘텐츠를 넣습니다. 설정값의 이미지와 미디어 경로는 `htdocs/`를 기준으로 작성합니다.
+LED 페이지는 [htdocs/data/kiosk_contents.json](htdocs/data/kiosk_contents.json)을 읽습니다. `welcome.welcome_list`에는 방문 환영 일정을, `notice.notice_list`에는 반복 재생할 홍보 콘텐츠를 넣습니다. `file_path`와 `bg_path`에는 LED 페이지와 같은 서버에서 제공하는 미디어 주소를 넣습니다. `uploads/banner.jpg`는 LED 페이지 기준 상대 경로이고, `/uploads/banner.jpg`는 서버 루트 기준 경로입니다. LED 페이지와 호스트·포트·프로토콜이 같은 전체 URL도 사용할 수 있습니다.
 
 ## `welcome.welcome_list` 방문 환영 일정
 
@@ -13,9 +13,9 @@ LED 페이지는 [htdocs/data/kiosk_contents.json](htdocs/data/kiosk_contents.js
 | 필드 | 넣는 값 | 화면에서 하는 일 |
 | --- | --- | --- |
 | `bg_type` | `"MOV"` 또는 `"IMG"` | 배경의 종류입니다. `MOV`는 무음 동영상, `IMG`는 이미지입니다. |
-| `bg_path` | 파일 경로 | 화면 전체에 표시할 배경 파일입니다. `commonfiles/` 또는 `images/`로 시작하는 상대 경로를 넣습니다. |
+| `bg_path` | 미디어 주소 | 화면 전체에 표시할 배경 파일의 주소입니다. |
 | `type` | `"MOV"` 또는 `"IMG"` | `MOV`는 무음 동영상, `IMG`는 이미지입니다. |
-| `file_path` | 파일 경로 | 가운데에 표시할 파일입니다. `commonfiles/파일명` 형식으로 넣습니다. |
+| `file_path` | 미디어 주소 | 가운데에 표시할 파일의 주소입니다. |
 | `sday` | `"YYYYMMDD"` | 표시 시작 날짜입니다. |
 | `eday` | `"YYYYMMDD"` | 표시 종료 날짜입니다. |
 | `stime` | `"HHmm"` | 매일의 표시 시작 시각입니다. 24시간제를 사용합니다. |
@@ -37,7 +37,7 @@ LED PC의 현재 날짜와 시각이 재생 조건에 맞는 묶음을 배열 �
 | 콘텐츠 필드 | 넣는 값 | 화면에서 하는 일 |
 | --- | --- | --- |
 | `type` | `"MOV"` 또는 `"IMG"` | `MOV`는 소리를 켠 동영상, `IMG`는 이미지입니다. |
-| `file_path` | 파일 경로 | 재생할 파일입니다. `commonfiles/파일명` 형식의 상대 경로를 넣습니다. |
+| `file_path` | 미디어 주소 | 재생할 파일의 주소입니다. |
 | `ptime` | 0보다 큰 숫자 | 초 단위 반복 주기입니다. 영상은 주기마다 처음부터 재생하고, 원본이 주기보다 짧으면 주기 안에서도 반복합니다. 같은 이미지가 반복되는 영역은 계속 표시합니다. |
 
 모든 콘텐츠는 각 영역을 꽉 채웁니다. 묶음 바로 아래에 `type`, `file_path`, `ptime`을 적으면 1분할로 재생합니다. 이 형식에서 `full_time`을 생략하면 `ptime`을 묶음 재생 시간으로 사용합니다.
@@ -107,5 +107,5 @@ LED PC의 현재 날짜와 시각이 재생 조건에 맞는 묶음을 배열 �
 
 ## 변경 사항 반영
 
-- 홍보 파일을 추가할 때는 `htdocs/commonfiles/`에 파일을 저장하고 `notice_list`에 `commonfiles/파일명` 형식으로 경로를 넣습니다. 설정을 저장한 뒤 LED 페이지를 새로고침하면 새 목록을 읽습니다.
+- 홍보 파일을 추가할 때는 웹서버에서 해당 파일을 제공하고 `notice_list`의 `file_path`에 접근 가능한 주소를 넣습니다. 설정을 저장한 뒤 LED 페이지를 새로고침하면 새 목록을 읽습니다.
 - 환영 일정을 추가하거나 수정한 뒤 LED 페이지를 새로고침하면 새 목록을 읽습니다. 환영 일정이 활성화된 동안에는 환영 화면이 우선합니다. 그 외 시간에는 `MSG|ROLLING` 명령으로 홍보 화면에 진입합니다. 이미 홍보 화면이면 재생을 이어갑니다.
