@@ -35,7 +35,7 @@
     <section id="screen-employee" class="screen" aria-label="직원 정보" hidden>
       <div class="artboard employee-background">
         <article class="panel employee-profile">
-          <img id="employee-photo" class="employee-photo" alt="" hidden>
+          <div class="employee-photo"><img id="employee-photo" alt="" hidden></div>
           <table class="employee-table"><tbody>
             <tr><th scope="row">성명</th><td id="employee-name"></td></tr>
             <tr><th scope="row">사번</th><td id="employee-id"></td></tr>
@@ -46,21 +46,21 @@
             <tr><th scope="row">연락처</th><td id="employee-phone"></td></tr>
           </tbody></table>
         </article>
-        <article class="panel employee-career"><h2><img src="images/ico_career.svg" alt="">근무이력</h2><div id="career-viewport"><ol id="employee-history"></ol></div></article>
+        <article class="panel employee-career"><h2><img src="images/ico_career.svg" alt="">근무이력</h2><div id="career-viewport" class="auto-scroll"><ol id="employee-history"></ol></div></article>
       </div>
     </section>
     <section id="screen-weapon" class="screen" aria-label="무기 및 사업 정보" hidden>
       <div class="artboard weapon-background">
         <article class="panel weapon-card">
           <h1 id="weapon-name"></h1>
-          <div id="weapon-branch"><img id="weapon-branch-icon" src="images/ico_army_1.svg" alt=""><span id="weapon-branch-name"></span></div>
+          <div id="weapon-branch" hidden></div>
           <div class="weapon-photo"><img id="weapon-image" alt="" hidden></div>
           <table class="weapon-table"><tbody>
             <tr><th scope="row" id="weapon-label-1">개발형태</th><td id="weapon-development"></td></tr>
             <tr><th scope="row" id="weapon-label-2">제조업체</th><td id="weapon-manufacturer"></td></tr>
             <tr><th scope="row">사업기간 / 양산</th><td id="weapon-period"></td></tr>
-            <tr class="performance-row"><th scope="row">주요성능</th><td id="weapon-performance"></td></tr>
-            <tr class="description-row"><th scope="row">기타</th><td id="weapon-description"></td></tr>
+            <tr class="performance-row"><th scope="row">주요성능</th><td><div id="weapon-performance" class="auto-scroll"></div></td></tr>
+            <tr class="description-row"><th scope="row">기타</th><td><div id="weapon-description" class="auto-scroll"></div></td></tr>
           </tbody></table>
         </article>
       </div>

@@ -5,9 +5,13 @@
   const labels = { rolling: '홍보 미디어 롤링', welcome: '웰컴', 'employee-search': '직원 검색 대기', employee: '직원 정보', 'weapon-search': '주요 사업 검색 대기', weapon: '무기 / 사업 정보' };
   const fadeDuration = 250;
   const welcomePreparationMs = 250;
+  const startupBufferSeconds = 0.5;
+  const rollingOptions = { finishEarly: true, repeatMinMs: 2000, preloadMs: 3000 };
+  const samplePhotoUrls = new Set(['img_photo.png', 'img_photo111.png', 'weapon-k9-sample.png']
+    .map(file => new URL(`images/${file}`, document.baseURI).href));
   let config = {};
-  let screen = '', revision = 0, activeLayer, finishFade, careerFrame, scheduleTimer;
-  let currentGroup, pendingGroup, resumeMedia;
+  let screen = '', revision = 0, activeLayer, displayedLayer, finishFade, detailScrollFrame, scheduleTimer;
+  let displayedGroup, currentGroup, pendingGroup, preloadedGroup, resumeMedia;
   let playlist = [], mediaIndex = -1, failedGroups = new Set();
   let welcomeList = [], activeWelcome;
   const status = value => { if ($('debug-status')) $('debug-status').textContent = value; };
@@ -17,7 +21,8 @@
     if (typeof path !== 'string' || !path.trim()) return '';
     try {
       const url = new URL(path.trim(), document.baseURI);
-      return /^https?:$/.test(url.protocol) ? url.href : '';
+      if (!/^https?:$/.test(url.protocol) || samplePhotoUrls.has(url.href.split(/[?#]/, 1)[0])) return '';
+      return url.href;
     } catch {
       return '';
     }
@@ -32,56 +37,89 @@
     status(message);
     console.error('[DTaQ LED]', error);
   }
-  function freezeGroup(group) {
-    if (!group) return;
+  function clearGroupTimers(group) {
     clearTimeout(group.timer);
-    group.panes.forEach(pane => pane.freeze());
+    clearTimeout(group.preloadTimer);
+  }
+  function stopGroup(group) {
+    clearGroupTimers(group);
+    group.panes.forEach(pane => pane.stop());
   }
   function discardGroup(group) {
     if (!group) return;
-    freezeGroup(group);
-    group.panes.forEach(pane => pane.stop());
+    stopGroup(group);
     group.layer.remove();
   }
+  function retireCurrentMedia() {
+    if (!currentGroup) return;
+    const group = currentGroup;
+    currentGroup = null;
+    if (group === displayedGroup) {
+      clearGroupTimers(group);
+      group.panes.forEach(pane => pane.retire());
+    } else {
+      discardGroup(group);
+      activeLayer = displayedLayer;
+    }
+  }
   function cancelMediaPreparation() {
-    const group = pendingGroup;
-    pendingGroup = null;
-    discardGroup(group);
+    const pending = pendingGroup;
+    const preloaded = preloadedGroup;
+    pendingGroup = preloadedGroup = null;
+    discardGroup(pending);
+    discardGroup(preloaded);
   }
   function show(next, layer, group, duration = fadeDuration) {
-    if (layer === activeLayer) return;
-    finishFade?.();
-    const previous = activeLayer;
-    const previousGroup = currentGroup;
-    freezeGroup(previousGroup);
-    cancelAnimationFrame(careerFrame);
+    retireCurrentMedia();
+    cancelAnimationFrame(detailScrollFrame);
     activeLayer = layer;
     currentGroup = group;
     screen = next;
-    layer.classList.add('is-active');
-    layer.hidden = false;
-    layer.inert = false;
     if ($('debug-panel')) $('debug-panel').dataset.screen = next;
     text('debug-screen', labels[next]);
-    group?.start();
-    if (!previous) return;
-    // Keep the frozen outgoing frame behind the incoming screen until the fade ends.
-    previous.classList.remove('is-active');
-    previous.inert = true;
-    const animation = layer.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing: 'ease-in-out' });
-    finishFade = animation.onfinish = () => {
-      finishFade = null;
-      animation.onfinish = null;
-      animation.cancel();
-      if (previousGroup) discardGroup(previousGroup);
-      else previous.hidden = true;
-    };
+    function reveal() {
+      if (activeLayer !== layer || currentGroup !== group) return;
+      finishFade?.();
+      const previous = displayedLayer;
+      const previousGroup = displayedGroup;
+      displayedLayer = layer;
+      displayedGroup = group;
+      layer.hidden = false;
+      layer.classList.add('is-active');
+      layer.inert = false;
+      if (!previous || previous === layer) {
+        layer.style.removeProperty('opacity');
+        return;
+      }
+      previous.classList.remove('is-active');
+      previous.inert = true;
+      // The previous screen stays opaque behind the incoming fade so the backdrop never shows through.
+      const animation = layer.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing: 'ease-in-out', fill: 'both' });
+      layer.style.removeProperty('opacity');
+      finishFade = animation.onfinish = () => {
+        finishFade = null;
+        animation.onfinish = null;
+        if (previousGroup) discardGroup(previousGroup);
+        else previous.hidden = true;
+        animation.cancel();
+      };
+    }
+    if (group?.screen === 'rolling') {
+      layer.style.opacity = '0';
+      layer.hidden = false;
+      layer.inert = true;
+      group.start().then(reveal);
+    } else {
+      group?.start();
+      reveal();
+    }
   }
   function showStaticScreen(next, render) {
     cancelMediaPreparation();
     if (next !== 'rolling') activeWelcome = undefined;
     render?.();
     show(next, $(`screen-${next}`));
+    scrollDetails();
   }
   function resize() {
     document.documentElement.style.setProperty('--stage-scale', Math.min(innerWidth / 3200, innerHeight / 1200));
@@ -147,50 +185,66 @@
     }
     return groups;
   }
-  function createMediaPane(item, { muted = true, onFailure } = {}) {
+  function createMediaPane(item, { muted = true, repeatMinMs = 0, onFinished, onFailure, onFadeStart, onFadeCancel } = {}) {
     const pane = document.createElement('div');
     pane.className = 'media-pane';
     pane.hidden = true;
     const isVideo = item.type === 'MOV';
     const element = document.createElement(isVideo ? 'video' : 'img');
-    let loadTimer, repeatTimer, frame, frozen = false, stopped = false, hasLoaded = false, drawFrame, resolveReady;
+    let loadTimer, repeatTimer, frame, drawFrame, resolveReady, resolveStarted, onPlaybackFrame, endFade;
+    let stopped = false, retiring = false, hasLoaded = false;
     const ready = new Promise(resolve => { resolveReady = resolve; });
     const hasVideoFrameCallback = typeof element.requestVideoFrameCallback === 'function';
-    function freeze() {
-      if (frozen) return;
-      frozen = true;
+    function stop() {
+      if (stopped) return;
+      stopped = true;
       clearTimeout(loadTimer);
-      clearInterval(repeatTimer);
-      element.onload = element.onloadeddata = element.onended = element.onerror = null;
+      clearTimeout(repeatTimer);
+      element.onload = element.oncanplay = element.oncanplaythrough = element.onprogress = null;
+      element.ontimeupdate = element.onended = element.onerror = null;
       if (isVideo) {
+        endFade?.cancel();
+        element.muted = true;
+        element.pause();
         if (frame != null) {
           if (hasVideoFrameCallback) element.cancelVideoFrameCallback(frame);
           else cancelAnimationFrame(frame);
         }
-        element.pause();
-        element.muted = true;
-      }
-    }
-    function stop() {
-      if (stopped) return;
-      stopped = true;
-      freeze();
-      if (isVideo) {
         element.removeAttribute('src');
         element.load();
+        element.remove();
       }
+      resolveStarted?.();
       resolveReady();
     }
+    function retire() {
+      retiring = true;
+      if (!isVideo) return;
+      clearTimeout(repeatTimer);
+      element.onended = null;
+      element.muted = true;
+      if (!hasLoaded || resolveStarted) stop();
+    }
     function fail() {
-      if (frozen) return;
+      if (stopped) return;
       stop();
       if (!isVideo) pane.replaceChildren();
-      onFailure?.(item);
+      if (!retiring) onFailure?.(item);
     }
     function loaded() {
       hasLoaded = true;
       clearTimeout(loadTimer);
       resolveReady();
+    }
+    function checkVideoBuffer() {
+      if (hasLoaded || element.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) return;
+      const buffered = element.buffered;
+      if (element.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA ||
+          (buffered.length && buffered.start(0) <= 0.05 &&
+           buffered.end(0) >= Math.min(startupBufferSeconds, element.duration))) {
+        element.oncanplay = element.oncanplaythrough = element.onprogress = null;
+        loaded();
+      }
     }
     pane.append(element);
     if (isVideo) {
@@ -200,19 +254,20 @@
       canvas.setAttribute('aria-hidden', 'true');
       element.setAttribute('aria-hidden', 'true');
       const context = canvas.getContext('2d', { alpha: false });
-      drawFrame = () => {
-        if (frozen) return;
+      drawFrame = (_, metadata) => {
+        if (stopped) return;
         if (element.readyState >= 2 && element.videoWidth && element.videoHeight) {
           const bounds = canvas.getBoundingClientRect(), pixelScale = window.devicePixelRatio || 1;
           const width = Math.max(1, Math.round(bounds.width * pixelScale)), height = Math.max(1, Math.round(bounds.height * pixelScale));
           if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
           context.drawImage(element, 0, 0, width, height);
+          if (!element.paused) onPlaybackFrame?.(metadata?.mediaTime ?? element.currentTime);
         }
         frame = hasVideoFrameCallback
           ? element.requestVideoFrameCallback(drawFrame) : requestAnimationFrame(drawFrame);
       };
       pane.append(canvas);
-      element.onloadeddata = loaded;
+      element.oncanplay = element.oncanplaythrough = element.onprogress = checkVideoBuffer;
       element.muted = muted; element.playsInline = true; element.preload = 'auto';
     } else {
       element.alt = item.alt ?? '국방기술품질원 안내 이미지';
@@ -223,7 +278,7 @@
     element.src = item.file_path;
     function play() {
       element.play().catch(error => {
-        if (frozen) return;
+        if (stopped || retiring) return;
         if (error.name === 'NotAllowedError' && !element.muted) {
           element.muted = true;
           element.play().catch(fail);
@@ -233,47 +288,103 @@
       });
     }
     function start(deadline = Infinity) {
-      if (frozen) return;
+      if (stopped || retiring) return;
       if (!hasLoaded) {
-        ready.then(() => start(deadline));
-        return;
+        return ready.then(() => start(deadline));
       }
       pane.hidden = false;
       if (!isVideo) return;
+      const started = new Promise(resolve => { resolveStarted = resolve; });
+      loadTimer = setTimeout(fail, 15000);
+      function markStarted() {
+        if (!resolveStarted) return;
+        clearTimeout(loadTimer);
+        element.ontimeupdate = null;
+        resolveStarted();
+        resolveStarted = null;
+      }
+      function fadeEndingPane() {
+        if (!endFade && onFadeStart?.()) {
+          endFade = pane.animate([{ opacity: 1 }, { opacity: 0 }], {
+            duration: fadeDuration, easing: 'ease-in-out', fill: 'forwards'
+          });
+        }
+      }
+      onPlaybackFrame = mediaTime => {
+        if (resolveStarted && mediaTime > 0 && element.currentTime > 0) markStarted();
+        if (!onFinished || retiring || endFade || repeatTimer) return;
+        const remainingClipMs = Math.max(0, element.duration - mediaTime) * 1000 / element.playbackRate;
+        if (remainingClipMs <= fadeDuration &&
+            deadline - performance.now() - remainingClipMs < repeatMinMs) fadeEndingPane();
+      };
+      // A low-frame-rate clip may start its clock before presenting a second frame.
+      element.ontimeupdate = () => {
+        if (!element.paused && element.currentTime >= 0.15) markStarted();
+      };
       drawFrame();
-      const restart = () => {
-        // Keep the last frame if a repeat would be visible only briefly before the cut.
-        if (frozen || performance.now() + fadeDuration >= deadline) return;
+      const cycle = (item.ptime ?? 0) * 1000;
+      function armCycle() {
+        if (cycle > 0 && deadline - performance.now() - cycle >= repeatMinMs) {
+          repeatTimer = setTimeout(restart, cycle);
+        }
+      }
+      function restart() {
+        clearTimeout(repeatTimer);
+        repeatTimer = null;
+        if (stopped || retiring) return;
+        const remaining = deadline - performance.now();
+        if (remaining <= 0 || remaining < repeatMinMs) {
+          if (element.ended) {
+            element.onended = null;
+            markStarted();
+            if (onFinished) fadeEndingPane();
+            onFinished?.();
+          }
+          return;
+        }
+        if (endFade) {
+          endFade.cancel();
+          endFade = null;
+          onFadeCancel();
+        }
         element.currentTime = 0;
         if (element.paused) play();
-      };
-      element.onended = restart;
-      play();
-      const cycle = (item.ptime ?? 0) * 1000;
-      if (cycle > 0 && performance.now() + cycle + fadeDuration < deadline) {
-        repeatTimer = setInterval(restart, cycle);
+        armCycle();
       }
+      element.onended = () => {
+        // A timer can already have restarted playback before a queued ended event runs.
+        if (element.ended) {
+          markStarted();
+          restart();
+        }
+      };
+      play();
+      armCycle();
+      return started;
     }
-    return { pane, ready, freeze, stop, start };
+    return { pane, ready, retire, stop, start };
   }
   function createMediaGroup(screen, entry) {
     const layer = $(`${screen}-template`).content.firstElementChild.cloneNode(true);
     return { screen, entry, layer, panes: [] };
   }
-  async function prepareMedia(group, duration) {
-    cancelMediaPreparation();
-    freezeGroup(currentGroup);
-    pendingGroup = group;
+  function prepareMedia(group) {
     group.layer.hidden = true;
     $('led-stage').append(group.layer);
-    const ready = Promise.all(group.panes.map(pane => pane.ready));
+    group.ready = Promise.all(group.panes.map(pane => pane.ready));
+  }
+  async function switchMedia(group, duration) {
+    cancelMediaPreparation();
+    retireCurrentMedia();
+    pendingGroup = group;
+    if (!group.ready) prepareMedia(group);
     if (group.screen === 'welcome') {
       let preparationTimer;
       const limit = new Promise(resolve => { preparationTimer = setTimeout(resolve, welcomePreparationMs); });
-      await Promise.race([ready, limit]);
+      await Promise.race([group.ready, limit]);
       clearTimeout(preparationTimer);
     } else {
-      await ready;
+      await group.ready;
     }
     if (pendingGroup !== group) return;
 
@@ -282,49 +393,92 @@
     pendingGroup = null;
     show(group.screen, group.layer, group, duration);
   }
-  function nextMedia(now = scheduleTime()) {
-    let index = -1;
+  function findNextMedia(now) {
     for (let offset = 1; offset <= playlist.length; offset++) {
       const candidate = (mediaIndex + offset) % playlist.length;
       if (!failedGroups.has(candidate) && isScheduled(playlist[candidate].schedule, now)) {
-        index = candidate;
-        break;
+        return candidate;
       }
     }
+    return -1;
+  }
+  function preloadNextMedia(group) {
+    if (currentGroup !== group || preloadedGroup) return;
+    const index = findNextMedia(scheduleTime());
+    if (index === -1) return;
+    preloadedGroup = createRollingGroup(index);
+    prepareMedia(preloadedGroup);
+  }
+  function finishRolling(group) {
+    if (currentGroup !== group) return;
+    const now = scheduleTime();
+    if (!updateWelcome(now)) nextMedia(now);
+  }
+  function nextMedia(now = scheduleTime()) {
+    const index = findNextMedia(now);
     if (index === -1) {
-      if (screen === 'rolling' && !pendingGroup && !currentGroup) return;
+      if (activeLayer === $('screen-rolling') && !pendingGroup) return;
       showStaticScreen('rolling');
       status('현재 재생 가능한 홍보 미디어가 없습니다.');
       return;
     }
     mediaIndex = index;
+    const group = preloadedGroup?.index === index ? preloadedGroup : createRollingGroup(index);
+    if (group === preloadedGroup) preloadedGroup = null;
+    return switchMedia(group, Math.min(fadeDuration, group.entry.fullTime * 500));
+  }
+  function createRollingGroup(index) {
     const entry = playlist[index];
     const duration = entry.fullTime * 1000;
     const group = createMediaGroup('rolling', entry);
+    group.index = index;
     const player = group.layer.querySelector('.media-player');
     player.dataset.layout = entry.layout;
     let remaining = entry.contents.length;
-    group.panes = entry.contents.map(item => createMediaPane(item, {
-      muted: entry.layout !== '1',
-      onFailure(failed) {
-        status(`미디어를 건너뜁니다: ${failed.file_path}`);
-        if (--remaining === 0) {
-          failedGroups.add(index);
-          const welcomeActive = updateWelcome();
-          if (!welcomeActive && (pendingGroup ?? currentGroup) === group) nextMedia();
+    const unfinishedVideos = new Set();
+    const visiblePanes = new Set(entry.contents.keys());
+    group.panes = entry.contents.map((item, paneIndex) => {
+      if (item.type === 'MOV') unfinishedVideos.add(paneIndex);
+      function finishVideo() {
+        if (unfinishedVideos.delete(paneIndex) && !unfinishedVideos.size && rollingOptions.finishEarly) {
+          finishRolling(group);
         }
       }
-    }));
+      return createMediaPane(item, {
+        muted: entry.layout !== '1',
+        repeatMinMs: rollingOptions.repeatMinMs,
+        onFinished: finishVideo,
+        onFadeStart: () => false,
+        onFadeCancel: () => visiblePanes.add(paneIndex),
+        onFailure(failed) {
+          visiblePanes.delete(paneIndex);
+          if (preloadedGroup !== group) status(`미디어를 건너뜁니다: ${failed.file_path}`);
+          if (--remaining > 0) {
+            finishVideo();
+          } else {
+            failedGroups.add(index);
+            if (preloadedGroup === group) {
+              preloadedGroup = null;
+              discardGroup(group);
+              if (currentGroup) preloadNextMedia(currentGroup);
+            } else if ((pendingGroup ?? currentGroup) === group && !updateWelcome()) {
+              nextMedia();
+            }
+          }
+        }
+      });
+    });
     player.append(...group.panes.map(pane => pane.pane));
     group.start = () => {
       status(`롤링 ${index + 1}/${playlist.length} · ${entry.layout}분할`);
       const deadline = performance.now() + duration;
-      group.timer = setTimeout(() => {
-        if (!updateWelcome() && !pendingGroup && currentGroup === group) nextMedia();
-      }, duration);
-      group.panes.forEach(pane => pane.start(deadline));
+      group.timer = setTimeout(() => finishRolling(group), duration);
+      if (rollingOptions.preloadMs > 0) {
+        group.preloadTimer = setTimeout(() => preloadNextMedia(group), Math.max(0, duration - rollingOptions.preloadMs));
+      }
+      return Promise.all(group.panes.map(pane => pane.start(deadline)));
     };
-    return prepareMedia(group, Math.min(fadeDuration, duration / 2));
+    return group;
   }
   function startRolling(now) {
     failedGroups = new Set();
@@ -348,7 +502,7 @@
       status('웰컴 미디어 재생 · 롤링 중지');
       group.panes.forEach(pane => pane.start());
     };
-    return prepareMedia(group);
+    return switchMedia(group);
   }
   function updateWelcome(now = scheduleTime()) {
     let nextWelcome;
@@ -383,6 +537,7 @@
     image.hidden = true;
     if (!src) {
       image.onload = null;
+      image.onerror = null;
       image.removeAttribute('src');
       return;
     }
@@ -409,36 +564,51 @@
       $('employee-history').append(row);
     }
   }
-  function scrollCareer() {
-    cancelAnimationFrame(careerFrame);
-    const viewport = $('career-viewport'); viewport.scrollTop = 0;
-    let previous = performance.now(), pauseUntil = previous + 2000, position = 0, atBottom = false;
+  function scrollDetails() {
+    cancelAnimationFrame(detailScrollFrame);
+    const viewports = activeLayer?.querySelectorAll('.auto-scroll');
+    if (!viewports?.length) return;
+    for (const viewport of viewports) viewport.scrollTop = 0;
+
+    let previous = performance.now();
+    let pauseUntil = previous + 2000, index = 0, position = 0;
+    let scrollingViewports = [];
     function tick(now) {
-      if (screen !== 'employee') return;
-      const delta = Math.min(now - previous, 100); previous = now;
-      const max = viewport.scrollHeight - viewport.clientHeight;
-      if (max > 0 && now >= pauseUntil) {
-        if (atBottom) {
-          position = 0; viewport.scrollTop = 0; atBottom = false; pauseUntil = now + 2000;
-        } else {
-          position = Math.min(max, position + delta * .018);
-          viewport.scrollTop = position;
-          if (position >= max) { atBottom = true; pauseUntil = now + 4000; }
-        }
+      detailScrollFrame = requestAnimationFrame(tick);
+      const delta = Math.min(now - previous, 100);
+      previous = now;
+      if (now < pauseUntil) return;
+
+      if (!scrollingViewports.length) {
+        scrollingViewports = Array.from(viewports).filter(viewport => viewport.scrollHeight > viewport.clientHeight);
+        if (!scrollingViewports.length) return;
       }
-      careerFrame = requestAnimationFrame(tick);
+      if (index === scrollingViewports.length) {
+        for (const viewport of scrollingViewports) viewport.scrollTop = 0;
+        scrollingViewports = [];
+        index = 0;
+        pauseUntil = now + 2000;
+        return;
+      }
+
+      const viewport = scrollingViewports[index];
+      const max = viewport.scrollHeight - viewport.clientHeight;
+      position = Math.min(max, position + delta * .018);
+      viewport.scrollTop = position;
+      if (position >= max) {
+        index++;
+        position = 0;
+        pauseUntil = now + (index < scrollingViewports.length ? 1000 : 4000);
+      }
     }
-    careerFrame = requestAnimationFrame(tick);
+    detailScrollFrame = requestAnimationFrame(tick);
   }
   function renderWeapon(weapon, project = false) {
     text('weapon-name', weapon.name);
-    const branches = { army: ['육군', 1], navy: ['해군', 3], air: ['공군', 2] };
-    const branch = Object.hasOwn(branches, weapon.branch) ? branches[weapon.branch] : undefined;
-    const branchName = project ? '사업' : (branch?.[0] ?? displayValue(weapon.branch));
-    $('weapon-branch').hidden = !branchName;
-    text('weapon-branch-name', branchName);
-    $('weapon-branch-icon').hidden = project || !branch;
-    if (branch) $('weapon-branch-icon').src = `images/ico_army_${branch[1]}.svg`;
+    const branchName = project ? '사업' : (weapon.branch ?? '');
+    const branchBadge = $('weapon-branch');
+    branchBadge.textContent = branchName;
+    branchBadge.hidden = branchName === '';
     text('weapon-label-1', project ? '진행상태' : '개발형태'); text('weapon-label-2', project ? '담당부서' : '제조업체');
     text('weapon-development', project ? weapon.status : weapon.development);
     text('weapon-manufacturer', project ? weapon.dept : weapon.manufacturer);
@@ -482,7 +652,6 @@
         if (!item) throw Error(`${type === 'employee' ? '직원' : '무기 / 사업'} ID “${id}”를 찾을 수 없습니다.`);
         if (type === 'employee') {
           showStaticScreen('employee', () => renderEmployee(item));
-          scrollCareer();
         } else {
           showStaticScreen('weapon', () => renderWeapon(item, type === 'project'));
         }
@@ -522,7 +691,13 @@
         background: validMedia(background) ? background : null
       });
     }
-    playlist = normalizePlaylist(config.notice?.notice_list);
+    const notice = config.notice;
+    rollingOptions.finishEarly = notice?.finishEarly !== false;
+    for (const key of ['repeatMinMs', 'preloadMs']) {
+      const value = notice?.[key];
+      if (Number.isFinite(value) && value >= 0) rollingOptions[key] = value;
+    }
+    playlist = normalizePlaylist(notice?.notice_list);
     if (!revision) syncStandby();
     tickSchedule();
     for (const [listId, items] of [['employee-ids', config.employees_list], ['weapon-ids', config.weapons_list]]) {
@@ -547,19 +722,22 @@
   });
   window.addEventListener('pagehide', () => {
     clearTimeout(scheduleTimer);
-    resumeMedia = Boolean(pendingGroup || currentGroup);
+    resumeMedia = Boolean(pendingGroup || currentGroup || displayedGroup);
     cancelMediaPreparation();
     finishFade?.();
-    freezeGroup(currentGroup);
-    currentGroup?.panes.forEach(pane => pane.stop());
-    cancelAnimationFrame(careerFrame);
+    if (currentGroup !== displayedGroup) discardGroup(currentGroup);
+    discardGroup(displayedGroup);
+    if (displayedGroup) displayedLayer = null;
+    currentGroup = displayedGroup = null;
+    activeLayer = displayedLayer;
+    cancelAnimationFrame(detailScrollFrame);
   });
   window.addEventListener('pageshow', event => {
     if (!event.persisted) return;
     activeWelcome = undefined;
     if (resumeMedia && !updateWelcome()) startRolling();
     tickSchedule();
-    if (screen === 'employee') scrollCareer();
+    scrollDetails();
   });
   ready.then(() => {
     const params = new URLSearchParams(location.search), type = params.get('screen');
