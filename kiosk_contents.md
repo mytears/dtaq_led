@@ -50,7 +50,7 @@ LED PC의 현재 날짜와 시각이 재생 조건에 맞는 묶음을 배열 �
 | `file_path` | 미디어 주소 | 재생할 파일의 주소입니다. |
 | `ptime` | 0보다 큰 숫자 | 초 단위 반복 주기입니다. 영상은 주기마다 처음부터 재생합니다. 같은 이미지가 반복되는 영역은 계속 표시합니다. |
 
-영상은 원본이 끝나거나 `ptime`에 지정한 반복 시점이 되면 남은 시간을 확인합니다. 되감아 다시 재생할 때마다 `ptime`을 처음부터 잽니다. 남은 시간이 `repeatMinMs`보다 짧으면 현재 재생을 이어갑니다. 먼저 재생을 마치는 영상 영역은 개별적으로 페이드 아웃합니다. 마지막으로 남은 영역은 새 화면이 페이드 인할 때까지 유지합니다.
+영상은 원본이 끝나거나 `ptime`에 지정한 반복 시점이 되면 남은 시간을 확인합니다. 되감아 다시 재생할 때마다 `ptime`을 처음부터 잽니다. 남은 시간이 `repeatMinMs`보다 짧으면 현재 재생을 이어갑니다. 먼저 재생을 마치는 영상 영역은 마지막 프레임을 유지합니다. 새 화면이 준비되면 묶음 전체가 페이드 전환됩니다.
 
 모든 콘텐츠는 각 영역을 꽉 채웁니다. 묶음 바로 아래에 `type`, `file_path`, `ptime`을 적으면 1분할로 재생합니다. 이 형식에서 `full_time`을 생략하면 `ptime`을 묶음 재생 시간으로 사용합니다.
 
@@ -60,7 +60,7 @@ LED PC의 현재 날짜와 시각이 재생 조건에 맞는 묶음을 배열 �
 
 아래 설정에서 2026년 11월 10일 09:00부터 09:59까지 웰컴 배경 영상 위에 전체 화면 이미지가 표시됩니다. 홍보 목록의 첫 항목은 10초짜리 1분할입니다. 둘째 항목은 같은 날 10:00부터 10:59까지 목록에 포함되는 40초짜리 3분할입니다.
 
-저장소의 실제 `kiosk_contents.json`에는 웰컴 이미지와 동영상, 홍보 1·2A·2B·3분할 테스트 설정이 들어 있습니다. 웰컴을 다른 시간에 확인하려면 해당 항목의 날짜와 시각을 LED PC의 현재 시간에 맞춘 뒤 페이지를 새로고침합니다.
+저장소의 실제 `kiosk_contents.json`에는 웰컴 배경 이미지와 홍보 1·2A·2B·3분할 설정이 들어 있습니다. 아래 예시의 미디어 경로는 실제 배포 파일의 경로로 바꿔 사용합니다. 웰컴을 다른 시간에 확인하려면 해당 항목의 날짜와 시각을 LED PC의 현재 시간에 맞춘 뒤 페이지를 새로고침합니다.
 
 ```json
 {
@@ -68,9 +68,9 @@ LED PC의 현재 날짜와 시각이 재생 조건에 맞는 묶음을 배열 �
     "welcome_list": [
       {
         "bg_type": "MOV",
-        "bg_path": "commonfiles/MAIN000070.mp4",
+        "bg_path": "datafiles/led/20261117/1794890586000_hs002w.mp4",
         "type": "IMG",
-        "file_path": "commonfiles/San-Francisco-Skyline-Mural-Wallpaper.jpg",
+        "file_path": "datafiles/welcome/20261113/1794553446060_stfk7y.png",
         "sday": "20261110",
         "eday": "20261110",
         "stime": "0900",
@@ -83,7 +83,7 @@ LED PC의 현재 날짜와 시각이 재생 조건에 맞는 묶음을 배열 �
       {
         "id": 1,
         "type": "MOV",
-        "file_path": "commonfiles/MAIN000070.mp4",
+        "file_path": "datafiles/led/20261117/1794890586000_hs002w.mp4",
         "ptime": 10
       },
       {
@@ -97,17 +97,17 @@ LED PC의 현재 날짜와 시각이 재생 조건에 맞는 묶음을 배열 �
         "contents": [
           {
             "type": "MOV",
-            "file_path": "commonfiles/MAIN000070.mp4",
+            "file_path": "datafiles/led/20261117/1794890586000_hs002w.mp4",
             "ptime": 10
           },
           {
             "type": "IMG",
-            "file_path": "commonfiles/San-Francisco-Skyline-Mural-Wallpaper.jpg",
+            "file_path": "datafiles/welcome/20261113/1794553446060_stfk7y.png",
             "ptime": 20
           },
           {
             "type": "MOV",
-            "file_path": "commonfiles/MAIN000070.mp4",
+            "file_path": "datafiles/led/20261117/1794890586000_hs002w.mp4",
             "ptime": 30
           }
         ]
